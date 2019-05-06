@@ -70,29 +70,22 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
     private class dbCaller implements Callable<List<WordEn>> {
-
         private String pattern;
 
-        dbCaller(String input) {
-            this.pattern = input;
-        }
+        dbCaller(String input) { this.pattern = input; }
 
         @Override
         public List<WordEn> call() throws InvalidParameterException {
             return mWordDb.wordDao().getWords(pattern);
         }
-
     }
 
-    public List<WordEn> dbGetWord(String word) throws InterruptedException, ExecutionException {
-        List<WordEn> wordlist;
+    public List<WordEn> dbGetWords(String word) throws InterruptedException, ExecutionException {
         ExecutorService es = Executors.newSingleThreadExecutor();
-
         dbCaller caller = new dbCaller(word);
         Future<List<WordEn>> future = es.submit(caller);
-        wordlist = future.get();
 
-        return wordlist;
+        return future.get();
     }
 
 
@@ -202,7 +195,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             List<WordEn> db_words;
 
             try {
-                db_words = dbGetWord(inText);
+                db_words = dbGetWords(inText);
                 if (db_words != null && !db_words.isEmpty()) {
                     if(db_words.size() >= 3) {
                         mCandy1 = db_words.get(0).getWord();
