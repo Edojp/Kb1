@@ -52,27 +52,17 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
     public void dbAddWord(final String word) {
-        new Thread(new Runnable() {
-            @Override
-            public void run(){
-                mWordDb.wordDao().insert(new WordEn(word));
-            }
-        }).start();
+        new Thread(() -> mWordDb.wordDao().insert(new WordEn(word))).start();
     }
 
     public void dbWipe() {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                mWordDb.clearAllTables();
-            }
-        }).start();
+        new Thread(() -> mWordDb.clearAllTables()).start();
     }
 
-    private class dbCaller implements Callable<List<WordEn>> {
+    private class dbCallWordList implements Callable<List<WordEn>> {
         private String pattern;
 
-        dbCaller(String input) { this.pattern = input; }
+        dbCallWordList(String input) { this.pattern = input; }
 
         @Override
         public List<WordEn> call() throws InvalidParameterException {
@@ -80,10 +70,29 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
     }
 
+    private class dbCallSingleWord implements Callable<WordEn> {
+        private String pattern;
+
+        dbCallSingleWord(String input) { this.pattern = input; }
+
+        @Override
+        public WordEn call() throws InvalidParameterException {
+            return mWordDb.wordDao().getSingleWord(pattern);
+        }
+    }
+
     public List<WordEn> dbGetWords(String word) throws InterruptedException, ExecutionException {
         ExecutorService es = Executors.newSingleThreadExecutor();
-        dbCaller caller = new dbCaller(word);
+        dbCallWordList caller = new dbCallWordList(word);
         Future<List<WordEn>> future = es.submit(caller);
+
+        return future.get();
+    }
+
+    public WordEn dbGetSingleWord(String word) throws InterruptedException, ExecutionException {
+        ExecutorService es = Executors.newSingleThreadExecutor();
+        dbCallSingleWord caller = new dbCallSingleWord(word);
+        Future<WordEn> future = es.submit(caller);
 
         return future.get();
     }

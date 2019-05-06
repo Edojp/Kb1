@@ -24,4 +24,6 @@ public interface WordDao {
     @Query("SELECT * from dictionary_en WHERE word LIKE (:pattern || '%')")
     List<WordEn> getWords(String pattern);
 
+    @Query("SELECT * from dictionary_en WHERE word = :pattern")
+    WordEn getSingleWord(String pattern);
 }
