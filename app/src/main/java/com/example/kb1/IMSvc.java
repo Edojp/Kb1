@@ -1,5 +1,6 @@
 package com.example.kb1;
 
+import android.content.Context;
 import android.inputmethodservice.InputMethodService;
 import android.inputmethodservice.Keyboard;
 import android.inputmethodservice.KeyboardView;
@@ -8,6 +9,20 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.InputConnection;
 import android.widget.TextView;
+import android.widget.Toast;
+
+import androidx.room.Room;
+
+import com.example.kb1.room.WordEn;
+import com.example.kb1.room.WordRoomDatabase;
+
+import java.security.InvalidParameterException;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ExecutorService;
 
 /*
 todo list:
@@ -23,11 +38,64 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private boolean caps;
     private boolean CANDY_ACTIVE = true;
     private String mCandy1, mCandy2, mCandy3; // todo why are these global?
+    private static final String DATABASE_NAME = "dic_en_db";
+    private WordRoomDatabase mWordDb;
+    Context master;
 
-    /*
-    todo should replace KeyboardView implementation with a vanilla layout - has been deprecated
-    and has several other drawbacks (like stupid "key code" system)
-     */
+    public void dbInit(){
+        mWordDb = Room.databaseBuilder(getApplicationContext(),
+                WordRoomDatabase.class, DATABASE_NAME)
+                .fallbackToDestructiveMigration()
+                .build();
+
+        Toast.makeText(this, "dbInit ok", Toast.LENGTH_LONG).show();
+    }
+
+    public void dbAddWord(final String word) {
+        new Thread(new Runnable() {
+            @Override
+            public void run(){
+                mWordDb.wordDao().insert(new WordEn(word));
+            }
+        }).start();
+    }
+
+    public void dbWipe() {
+        new Thread(new Runnable() {
+            @Override
+            public void run() {
+                mWordDb.clearAllTables();
+            }
+        }).start();
+    }
+
+    private class dbCaller implements Callable<List<WordEn>> {
+
+        private String pattern;
+
+        dbCaller(String input) {
+            this.pattern = input;
+        }
+
+        @Override
+        public List<WordEn> call() throws InvalidParameterException {
+            return mWordDb.wordDao().getWords(pattern);
+        }
+
+    }
+
+    public List<WordEn> dbGetWord(String word) throws InterruptedException, ExecutionException {
+        List<WordEn> wordlist;
+        ExecutorService es = Executors.newSingleThreadExecutor();
+
+        dbCaller caller = new dbCaller(word);
+        Future<List<WordEn>> future = es.submit(caller);
+        wordlist = future.get();
+
+        return wordlist;
+    }
+
+
     public View getKeyboardView(String layout) {
         /*
         todo Add some logic to specify alternate mainLayout e.g. dvorak, alphabetical
@@ -52,8 +120,11 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return keyboardView;
     }
 
+
     @Override
     public View onCreateInputView() {
+        dbInit();
+        master = this;
         return getKeyboardView("MAIN");
     }
 
@@ -90,7 +161,9 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         InputConnection ic = getCurrentInputConnection();
 
         if (ic != null) {
-            ic.commitText(tv.getText().toString(),1);
+            String clickedWord = tv.getText().toString();
+            ic.commitText(clickedWord,1);
+            dbAddWord(clickedWord);
         }
     }
 
@@ -123,11 +196,33 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 }
 
             /*
-            todo why are these global? should probably just pass back a list of candidates
+            todo why are mCandyX vars global? should probably just pass back a list of candidates
              */
-            mCandy1 = inText + "[1]";
-            mCandy2 = inText + "[2]";
-            mCandy3 = inText + "[3]";
+
+            List<WordEn> db_words;
+
+            try {
+                db_words = dbGetWord(inText);
+                if (db_words != null && !db_words.isEmpty()) {
+                    if(db_words.size() >= 3) {
+                        mCandy1 = db_words.get(0).getWord();
+                        mCandy2 = db_words.get(1).getWord();
+                        mCandy3 = db_words.get(2).getWord();
+
+                        return true;
+                    }
+                }
+            } catch (ExecutionException ee) {
+                Toast.makeText(this, "thread exception fetching candidates from db",
+                        Toast.LENGTH_LONG).show();
+            } catch (InterruptedException ie) {
+                Toast.makeText(this, "thread exception fetching candidates from db",
+                        Toast.LENGTH_LONG).show();
+            }
+
+            mCandy1 = "";
+            mCandy2 = inText;
+            mCandy3 = "";
 
             return true;
         }
@@ -187,6 +282,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     break;
                 case 999:
                     ic.commitText("😠", 1);
+                    dbWipe();
+                    Toast.makeText(this, "db wiped", Toast.LENGTH_LONG).show();
                     break;
                 default:
                     char code = (char) primaryCode;
