@@ -18,6 +18,7 @@ import com.example.kb1.room.WordEn;
 import com.example.kb1.room.WordRoomDatabase;
 
 import java.security.InvalidParameterException;
+import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -38,7 +39,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private Keyboard keyboard;
     private boolean caps;
     private boolean CANDY_ACTIVE = true;
-    private String mCandy1, mCandy2, mCandy3; // todo why are these global?
+    private String mCandy1, mCandy2, mCandy3;
     private static final String DATABASE_NAME = "dic_en_db";
     private WordRoomDatabase mWordDb;
 
@@ -52,23 +53,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
     private static volatile WordRoomDatabase INSTANCE;
-
-    public void dbAddWord(final String pattern) {
-        /*
-        Query to see if exists, if not add to database, else increment
-        usage and skip
-         */
-        new Thread(() -> {
-            // prevent dupe words going into database, increase usage instead
-            WordEn word = mWordDb.wordDao().getSingleWord(pattern);
-            if (word == null) {
-                mWordDb.wordDao().insert(new WordEn(pattern));
-            } else {
-                int usage = word.getUsage();
-                mWordDb.wordDao().setUsage(word.getId(), ++usage);
-            }
-        }).start();
-    }
 
     public void dbWipe() {
         new Thread(() -> mWordDb.clearAllTables()).start();
@@ -112,6 +96,21 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return future.get();
     }
 
+    public void dbAddWord(final String pattern) {
+        /*
+        Query to see if exists, if not add to database, else
+        increment usage and skip
+         */
+        new Thread(() -> {
+            WordEn word = mWordDb.wordDao().getSingleWord(pattern);
+            if (word == null) {
+                mWordDb.wordDao().insert(new WordEn(pattern));
+            } else {
+                int usage = word.getUsage();
+                mWordDb.wordDao().setUsage(word.getId(), ++usage);
+            }
+        }).start();
+    }
 
     public View getKeyboardView(String layout) {
         /*
@@ -191,15 +190,14 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             ic.deleteSurroundingText(inText.length(),0);
             ic.commitText(clickedWord + " ",1);
             dbAddWord(clickedWord);
-
+/*
             try {
                 WordEn word = dbGetSingleWord(clickedWord);
                 Toast.makeText(this,word.getWord() + " usage: " + Integer.toString(word.getUsage()), Toast.LENGTH_LONG).show();
             } catch (InterruptedException e) {
-                //todo
             } catch (ExecutionException e) {
-                //todo
             }
+            */
         }
     }
 
@@ -229,18 +227,30 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             todo Handle non-letter case e.g. hyphen, apostrophe etc.
              */
 
-            List<WordEn> db_words;
-
             try {
-                db_words = dbGetWords(inText);
-                if (db_words != null && !db_words.isEmpty()) {
-                    if (db_words.size() >= 3) {
-                        mCandy1 = db_words.get(0).getWord();
-                        mCandy2 = db_words.get(1).getWord();
-                        mCandy3 = db_words.get(2).getWord();
+                List<WordEn> db_words = dbGetWords(inText);
 
-                        return true;
+                if (db_words != null && !db_words.isEmpty()) {
+                    // sort returned db_words by usage
+                    db_words.sort(Comparator.comparing(WordEn::getUsage).reversed());
+
+                    switch (db_words.size()) {
+                        case 1:
+                            mCandy1 = "";
+                            mCandy2 = db_words.get(0).getWord();
+                            mCandy3 = "";
+                            break;
+                        case 2:
+                            mCandy1 = "";
+                            mCandy2 = db_words.get(0).getWord();
+                            mCandy3 = db_words.get(1).getWord();
+                            break;
+                        default:
+                            mCandy1 = db_words.get(2).getWord();
+                            mCandy2 = db_words.get(0).getWord();
+                            mCandy3 = db_words.get(1).getWord();
                     }
+                    return true;
                 }
             } catch (ExecutionException ee) {
                 Toast.makeText(this, "thread exception fetching candidates from db",
@@ -250,6 +260,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                         Toast.LENGTH_LONG).show();
             }
 
+            // if no suggestions returned, show entered word as only candidate
             mCandy1 = "";
             mCandy2 = inText;
             mCandy3 = "";
