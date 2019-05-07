@@ -18,12 +18,15 @@ public interface WordDao {
     @Update
     void delFlag(WordEn word);
 
-    @Update
-    void wordUsed(WordEn word);
+  //  @Update
+  //  void wordIncrementUsage(int usage);
 
     @Query("SELECT * from dictionary_en WHERE word LIKE (:pattern || '%')")
     List<WordEn> getWords(String pattern);
 
     @Query("SELECT * from dictionary_en WHERE word = :pattern")
     WordEn getSingleWord(String pattern);
+
+    @Query("UPDATE dictionary_en SET count = :usage WHERE id = :dbid")
+    void setUsage(int dbid, int usage);
 }

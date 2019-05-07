@@ -7,6 +7,7 @@ import android.inputmethodservice.KeyboardView;
 import android.text.TextUtils;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.inputmethod.CorrectionInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -40,7 +41,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private String mCandy1, mCandy2, mCandy3; // todo why are these global?
     private static final String DATABASE_NAME = "dic_en_db";
     private WordRoomDatabase mWordDb;
-    Context master;
 
     public void dbInit(){
         mWordDb = Room.databaseBuilder(getApplicationContext(),
@@ -51,8 +51,23 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         Toast.makeText(this, "dbInit ok", Toast.LENGTH_LONG).show();
     }
 
-    public void dbAddWord(final String word) {
-        new Thread(() -> mWordDb.wordDao().insert(new WordEn(word))).start();
+    private static volatile WordRoomDatabase INSTANCE;
+
+    public void dbAddWord(final String pattern) {
+        /*
+        Query to see if exists, if not add to database, else increment
+        usage and skip
+         */
+        new Thread(() -> {
+            // prevent dupe words going into database, increase usage instead
+            WordEn word = mWordDb.wordDao().getSingleWord(pattern);
+            if (word == null) {
+                mWordDb.wordDao().insert(new WordEn(pattern));
+            } else {
+                int usage = word.getUsage();
+                mWordDb.wordDao().setUsage(word.getId(), ++usage);
+            }
+        }).start();
     }
 
     public void dbWipe() {
@@ -126,7 +141,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     @Override
     public View onCreateInputView() {
         dbInit();
-        master = this;
         return getKeyboardView("MAIN");
     }
 
@@ -160,16 +174,36 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         /* retrieve the contents of the textview that called this
         and commit to input i.e. user accepted candidate */
         TextView tv = v.findViewById(v.getId());
+        String clickedWord = tv.getText().toString();
         InputConnection ic = getCurrentInputConnection();
+        CorrectionInfo cob;
 
         if (ic != null) {
-            String clickedWord = tv.getText().toString();
-            ic.commitText(clickedWord,1);
+            String inText;
+            inText = ic.getTextBeforeCursor(15, 0).toString();
+
+            for (int x = inText.length() - 1; x >= 0; x--) {
+                if (!Character.isLetter(inText.charAt(x))) {
+                    inText = inText.substring(inText.length() - (inText.length() - x) + 1);
+                    break;
+                }
+            }
+            ic.deleteSurroundingText(inText.length(),0);
+            ic.commitText(clickedWord + " ",1);
             dbAddWord(clickedWord);
+
+            try {
+                WordEn word = dbGetSingleWord(clickedWord);
+                Toast.makeText(this,word.getWord() + " usage: " + Integer.toString(word.getUsage()), Toast.LENGTH_LONG).show();
+            } catch (InterruptedException e) {
+                //todo
+            } catch (ExecutionException e) {
+                //todo
+            }
         }
     }
 
-    public boolean setCandy() {
+    public boolean setCandy() { //todo why is this boolean, shouldnt this return the candidates?
         /*
         todo this will be most of the work i'm guessing:
         1. look at the text (how much?) in the input field
@@ -177,28 +211,22 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         3. call dictionary db and return <= 3 suitable candidates
          */
         InputConnection ic = getCurrentInputConnection();
-        String inText;
+
         if (ic != null) {
-            /* work backwards from cursor until we find a space
-             todo how far back do we go? why did i even pick 10?
+            String inText;
+            /* work backwards from cursor until we find a non letter character
+             todo why is this 15? think of something better
              */
-            inText = ic.getTextBeforeCursor(10, 0).toString();
+            inText = ic.getTextBeforeCursor(15, 0).toString();
 
             for (int x = inText.length() - 1; x >= 0; x--) {
-                if (inText.charAt(x) == ' ') {
-                    inText = inText.substring(x);
+                if (!Character.isLetter(inText.charAt(x))) {
+                    inText = inText.substring(x+1);
                     break;
                 }
-                /* handle non letter case, should not suggest (except apostrophe
-                 todo Needs work, what happens if you put ? ! etc at end of word?
-                 */
-                if (!Character.isLetter(inText.charAt(x)) && inText.charAt(x) != '\'') {
-                        return false;
-                    }
-                }
-
+            }
             /*
-            todo why are mCandyX vars global? should probably just pass back a list of candidates
+            todo Handle non-letter case e.g. hyphen, apostrophe etc.
              */
 
             List<WordEn> db_words;
@@ -206,7 +234,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             try {
                 db_words = dbGetWords(inText);
                 if (db_words != null && !db_words.isEmpty()) {
-                    if(db_words.size() >= 3) {
+                    if (db_words.size() >= 3) {
                         mCandy1 = db_words.get(0).getWord();
                         mCandy2 = db_words.get(1).getWord();
                         mCandy3 = db_words.get(2).getWord();
