@@ -1,6 +1,5 @@
 package com.example.kb1;
 
-import android.content.Context;
 import android.inputmethodservice.InputMethodService;
 import android.inputmethodservice.Keyboard;
 import android.inputmethodservice.KeyboardView;
@@ -28,7 +27,6 @@ import java.util.concurrent.ExecutorService;
 
 /*
 todo list:
--implement db + persistent user word list
 -rewrite to ditch KeyboardView, has been deprecated as "convenience class"
 -japanese support? (no idea how this is going to work, sounds hard..)
 -chinese support? (dear god)
@@ -52,11 +50,10 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         Toast.makeText(this, "dbInit ok", Toast.LENGTH_LONG).show();
     }
 
-    private static volatile WordRoomDatabase INSTANCE;
-
     public void dbWipe() {
         new Thread(() -> mWordDb.clearAllTables()).start();
     }
+
 
     private class dbCallWordList implements Callable<List<WordEn>> {
         private String pattern;
@@ -69,6 +66,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
     }
 
+
     private class dbCallSingleWord implements Callable<WordEn> {
         private String pattern;
 
@@ -80,6 +78,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
     }
 
+
     public List<WordEn> dbGetWords(String word) throws InterruptedException, ExecutionException {
         ExecutorService es = Executors.newSingleThreadExecutor();
         dbCallWordList caller = new dbCallWordList(word);
@@ -88,6 +87,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return future.get();
     }
 
+
     public WordEn dbGetSingleWord(String word) throws InterruptedException, ExecutionException {
         ExecutorService es = Executors.newSingleThreadExecutor();
         dbCallSingleWord caller = new dbCallSingleWord(word);
@@ -95,6 +95,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         return future.get();
     }
+
 
     public void dbAddWord(final String pattern) {
         /*
@@ -111,6 +112,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             }
         }).start();
     }
+
 
     public View getKeyboardView(String layout) {
         /*
@@ -143,6 +145,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return getKeyboardView("MAIN");
     }
 
+
     public View getCandyView() {
         /* candidate view rebuilt with new candidates on every key press
         todo Probably more efficient to create once and just hide/show/update the text views
@@ -163,6 +166,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         return candyView;
     }
+
 
     @Override
     public View onCreateCandidatesView() {
@@ -200,6 +204,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             */
         }
     }
+
 
     public boolean setCandy() { //todo why is this boolean, shouldnt this return the candidates?
         /*
@@ -271,6 +276,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             return false;
         }
     }
+
 
     @Override
     public void onKey(int primaryCode, int[] keyCodes) {
@@ -356,28 +362,33 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     public void onText(CharSequence text) {
     }
 
+
     @Override
     public void swipeLeft() {
     }
+
 
     @Override
     public void swipeRight() {
     }
 
+
     @Override
     public void swipeDown() {
     }
+
 
     @Override
     public void swipeUp() {
     }
 
+
     @Override
     public void onPress(int primaryCode) {
     }
 
+
     @Override
     public void onRelease(int primaryCode) {
     }
-
 }
