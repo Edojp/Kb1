@@ -4,6 +4,7 @@ import android.inputmethodservice.InputMethodService;
 import android.inputmethodservice.Keyboard;
 import android.inputmethodservice.KeyboardView;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
 import android.view.inputmethod.CorrectionInfo;
@@ -27,9 +28,11 @@ import java.util.concurrent.ExecutorService;
 
 /*
 todo list:
--rewrite to ditch KeyboardView, has been deprecated as "convenience class"
--japanese support? (no idea how this is going to work, sounds hard..)
--chinese support? (dear god)
+ -predict next word based off previous (how many?) word(s)
+ -rewrite to ditch KeyboardView, has been deprecated as "convenience class"
+ -gesture-based input
+ -japanese support? (no idea how this is going to work, sounds hard..)
+ -chinese support? (in theory this should be easier than jp since no kana
  */
 
 public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboardActionListener {
@@ -40,6 +43,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private String mCandy1, mCandy2, mCandy3;
     private static final String DATABASE_NAME = "dic_en_db";
     private WordRoomDatabase mWordDb;
+    private final int MAX_SEEK = 15;
+
 
     public void dbInit(){
         mWordDb = Room.databaseBuilder(getApplicationContext(),
@@ -49,6 +54,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         Toast.makeText(this, "dbInit ok", Toast.LENGTH_LONG).show();
     }
+
 
     public void dbWipe() {
         new Thread(() -> mWordDb.clearAllTables()).start();
@@ -173,20 +179,25 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return getCandyView();
     }
 
+
+    // looks unused but actually is, called on candidate tap
     public void onCandyClick(View v){
         /* retrieve the contents of the textview that called this
         and commit to input i.e. user accepted candidate */
         TextView tv = v.findViewById(v.getId());
         String clickedWord = tv.getText().toString();
         InputConnection ic = getCurrentInputConnection();
-        CorrectionInfo cob;
+//        CorrectionInfo cob;
 
         if (ic != null) {
             String inText;
             inText = ic.getTextBeforeCursor(15, 0).toString();
 
+            // todo this needs work, counts back until it finds a
             for (int x = inText.length() - 1; x >= 0; x--) {
                 if (!Character.isLetter(inText.charAt(x))) {
+                    if (inText.charAt(x) == '\'') continue;
+
                     inText = inText.substring(inText.length() - (inText.length() - x) + 1);
                     break;
                 }
@@ -194,10 +205,14 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             ic.deleteSurroundingText(inText.length(),0);
             ic.commitText(clickedWord + " ",1);
             dbAddWord(clickedWord);
-/*
+
+            clearCandy();
+
+            /*
             try {
                 WordEn word = dbGetSingleWord(clickedWord);
-                Toast.makeText(this,word.getWord() + " usage: " + Integer.toString(word.getUsage()), Toast.LENGTH_LONG).show();
+                Toast.makeText(this,word.getWord() + " usage: " +
+                    Integer.toString(word.getUsage()), Toast.LENGTH_LONG).show();
             } catch (InterruptedException e) {
             } catch (ExecutionException e) {
             }
@@ -205,25 +220,32 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
     }
 
+    public void clearCandy() {
+        Log.d("clearCandy", "running");
+        mCandy1 = "";
+        mCandy2 = "";
+        mCandy3 = "";
+    }
 
     public boolean setCandy() { //todo why is this boolean, shouldnt this return the candidates?
         /*
         todo this will be most of the work i'm guessing:
-        1. look at the text (how much?) in the input field
-        2. identify the chars we want to start suggesting candidates on
-        3. call dictionary db and return <= 3 suitable candidates
+         1. look at the text (how much?) in the input field
+         2. identify the chars we want to start suggesting candidates on
+         3. call dictionary db and return <= 3 suitable candidates
          */
         InputConnection ic = getCurrentInputConnection();
 
         if (ic != null) {
             String inText;
-            /* work backwards from cursor until we find a non letter character
-             todo why is this 15? think of something better
-             */
-            inText = ic.getTextBeforeCursor(15, 0).toString();
+
+            // work backwards from cursor until we find a non letter character
+            inText = ic.getTextBeforeCursor(MAX_SEEK, 0).toString();
 
             for (int x = inText.length() - 1; x >= 0; x--) {
                 if (!Character.isLetter(inText.charAt(x))) {
+                    if (inText.charAt(x) == '\'') continue;
+
                     inText = inText.substring(x+1);
                     break;
                 }
@@ -287,9 +309,9 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         if (ic != null) {
             /*
             todo this whole part needs rewriting, should just do a ic.committext
-            on the key label contents rather than this stupid ascii-only code system
-            and let us get rid of horrible hacks like code 666, 999 etc.
-            this will require ditching KeyboardView (has been deprecated anyway)
+             on the key label contents rather than this stupid ascii-only code system
+             and let us get rid of horrible hacks like code 666, 999 etc.
+             this will require ditching KeyboardView (has been deprecated anyway)
              */
             switch(primaryCode) {
                 case Keyboard.KEYCODE_DELETE:
