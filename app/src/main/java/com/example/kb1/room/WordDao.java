@@ -1,5 +1,6 @@
 package com.example.kb1.room;
 
+import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
 import androidx.room.Insert;
 import androidx.room.Query;
@@ -11,7 +12,7 @@ public interface WordDao {
     @Insert
     void insert(WordEn word);
 
-    @Query("SELECT * from dictionary_en WHERE word LIKE (:pattern || '%')")
+    @Query("SELECT * from dictionary_en WHERE word LIKE (:pattern || '%') ORDER BY count")
     List<WordEn> getWords(String pattern);
 
     @Query("SELECT * from dictionary_en WHERE word = :pattern")
@@ -22,4 +23,7 @@ public interface WordDao {
 
     @Query("UPDATE dictionary_en SET flags = :flag where id = :dbid")
     void setFlags(int dbid, String flag);
+
+    @Query("SELECT COUNT(word) FROM dictionary_en")
+    int getWordCountEn();
 }

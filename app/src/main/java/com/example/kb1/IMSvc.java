@@ -1,5 +1,6 @@
 package com.example.kb1;
 
+import android.database.DatabaseUtils;
 import android.inputmethodservice.InputMethodService;
 import android.inputmethodservice.Keyboard;
 import android.inputmethodservice.KeyboardView;
@@ -12,12 +13,20 @@ import android.view.inputmethod.InputConnection;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.lifecycle.LiveData;
 import androidx.room.Room;
 
 import com.example.kb1.room.WordEn;
 import com.example.kb1.room.WordRoomDatabase;
 
+import org.xmlpull.v1.XmlPullParserException;
+
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.security.InvalidParameterException;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -44,7 +53,33 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private static final String DATABASE_NAME = "dic_en_db";
     private WordRoomDatabase mWordDb;
     private final int MAX_SEEK = 15;
+    boolean mShowCandy = false;
 
+    public boolean importWordlist() {
+        Log.d("inportWordList", "attempting to import word list from xml");
+        InputStream stream = null;
+        List<String> words = new ArrayList<>();
+
+        WordListXmlParser mWordListXmlParser = new WordListXmlParser();
+        stream = getResources().openRawResource(R.raw.wordlist_en);
+
+        if (stream != null) {
+            try {
+                words = mWordListXmlParser.parse(stream);
+            } catch (XmlPullParserException | IOException e) {
+                Log.e("importWordList", e.toString() +  e.getMessage());
+            }
+
+            if (!words.isEmpty()) {
+                Log.i("importWordList", "importing " + words.size() + " entries");
+                for (String word : words) {
+                    dbAddWord(word);
+                }
+                return true;
+            }
+        }
+        return false;
+    }
 
     public void dbInit(){
         mWordDb = Room.databaseBuilder(getApplicationContext(),
@@ -52,7 +87,16 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 .fallbackToDestructiveMigration()
                 .build();
 
-        Toast.makeText(this, "dbInit ok", Toast.LENGTH_LONG).show();
+        new Thread(() -> {
+            int word_count = mWordDb.wordDao().getWordCountEn();
+
+            Log.i("dbinit", "word count is " + word_count);
+            if (word_count < 5000) {
+                importWordlist();
+            }
+        }).start();
+
+        Toast.makeText(this, "dbInit ok!", Toast.LENGTH_LONG).show();
     }
 
 
@@ -193,7 +237,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             String inText;
             inText = ic.getTextBeforeCursor(15, 0).toString();
 
-            // todo this needs work, counts back until it finds a
             for (int x = inText.length() - 1; x >= 0; x--) {
                 if (!Character.isLetter(inText.charAt(x))) {
                     if (inText.charAt(x) == '\'') continue;
@@ -302,7 +345,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
     @Override
     public void onKey(int primaryCode, int[] keyCodes) {
-        boolean showCandy = false;
+
         View candyView;
 
         InputConnection ic = getCurrentInputConnection();
@@ -329,7 +372,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                             } else {
                                 ic.deleteSurroundingText(1, 0);
                             }
-                            showCandy = true;
+                            mShowCandy = true;
                         }
                     break;
                 case Keyboard.KEYCODE_SHIFT:
@@ -360,10 +403,10 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                         code = Character.toUpperCase(code);
                     }
                     ic.commitText(String.valueOf(code), 1);
-                    showCandy = true;
+                    mShowCandy = true;
             }
 
-            if (showCandy && CANDY_ACTIVE) {
+            if (mShowCandy && CANDY_ACTIVE) {
                 candyView = getCandyView();
                 if (candyView != null) {
                     setCandidatesView(candyView);
