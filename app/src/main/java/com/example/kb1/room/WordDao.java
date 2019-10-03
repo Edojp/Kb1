@@ -1,7 +1,7 @@
 package com.example.kb1.room;
 
-import androidx.lifecycle.LiveData;
 import androidx.room.Dao;
+import androidx.room.Delete;
 import androidx.room.Insert;
 import androidx.room.Query;
 
@@ -11,6 +11,9 @@ import java.util.List;
 public interface WordDao {
     @Insert
     void insert(WordEn word);
+
+    @Query("DELETE from dictionary_en WHERE word = :word")
+    int delete(String word);
 
     @Query("SELECT * from dictionary_en WHERE word LIKE (:pattern || '%') ORDER BY count")
     List<WordEn> getWords(String pattern);

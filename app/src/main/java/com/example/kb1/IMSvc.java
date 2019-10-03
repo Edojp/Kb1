@@ -1,6 +1,5 @@
 package com.example.kb1;
 
-import android.database.DatabaseUtils;
 import android.inputmethodservice.InputMethodService;
 import android.inputmethodservice.Keyboard;
 import android.inputmethodservice.KeyboardView;
@@ -8,12 +7,10 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.inputmethod.CorrectionInfo;
 import android.view.inputmethod.InputConnection;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import androidx.lifecycle.LiveData;
 import androidx.room.Room;
 
 import com.example.kb1.room.WordEn;
@@ -21,8 +18,6 @@ import com.example.kb1.room.WordRoomDatabase;
 
 import org.xmlpull.v1.XmlPullParserException;
 
-import java.io.File;
-import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.security.InvalidParameterException;
@@ -63,21 +58,20 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         WordListXmlParser mWordListXmlParser = new WordListXmlParser();
         stream = getResources().openRawResource(R.raw.wordlist_en);
 
-        if (stream != null) {
-            try {
-                words = mWordListXmlParser.parse(stream);
-            } catch (XmlPullParserException | IOException e) {
-                Log.e("importWordList", e.toString() +  e.getMessage());
-            }
-
-            if (!words.isEmpty()) {
-                Log.i("importWordList", "importing " + words.size() + " entries");
-                for (String word : words) {
-                    dbAddWord(word);
-                }
-                return true;
-            }
+        try {
+            words = mWordListXmlParser.parse(stream);
+        } catch (XmlPullParserException | IOException e) {
+            Log.e("importWordList", e.toString() +  e.getMessage());
         }
+
+        if (!words.isEmpty()) {
+            Log.i("importWordList", "importing " + words.size() + " entries");
+            for (String word : words) {
+                dbAddWord(word);
+            }
+            return true;
+        }
+
         return false;
     }
 
@@ -91,8 +85,11 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             int word_count = mWordDb.wordDao().getWordCountEn();
 
             Log.i("dbinit", "word count is " + word_count);
-            if (word_count < 5000) {
-                importWordlist();
+            // only import wordlist if not done already
+            if (word_count < 1000) {
+                if(!importWordlist()) {
+                    Log.e("dbInit", "some issue importing word list");
+                }
             }
         }).start();
 
@@ -138,6 +135,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
+    // is this needed?
     public WordEn dbGetSingleWord(String word) throws InterruptedException, ExecutionException {
         ExecutorService es = Executors.newSingleThreadExecutor();
         dbCallSingleWord caller = new dbCallSingleWord(word);
@@ -159,6 +157,16 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             } else {
                 int usage = word.getUsage();
                 mWordDb.wordDao().setUsage(word.getId(), ++usage);
+            }
+        }).start();
+    }
+
+
+    public void dbDelWord(final String pattern) {
+        new Thread(() -> {
+            int result = mWordDb.wordDao().delete(pattern);
+            if (result < 1) {
+                Log.w("dbdDelWord", "tried to delete word that doesn't exist: " + pattern);
             }
         }).start();
     }
