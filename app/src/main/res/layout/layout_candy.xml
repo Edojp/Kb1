@@ -16,7 +16,6 @@
         android:text="@string/placeholder"
         android:textColor="@color/colorLightText"
         android:textSize="20sp"
-        android:onClick="onCandyClick"
         android:clickable="true"
         />
 

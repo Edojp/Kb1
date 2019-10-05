@@ -6,4 +6,5 @@
     <!-- Strings related to Settings -->
 
     <string name="placeholder">Placeholder</string>
+    <string name="alert_delete_confirmation">Are you sure you want to delete this word from the dictionary?</string>
 </resources>

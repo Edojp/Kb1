@@ -1,12 +1,20 @@
 package com.example.kb1;
 
+import android.app.AlertDialog;
+import android.content.ActivityNotFoundException;
+import android.content.DialogInterface;
+import android.content.Intent;
 import android.inputmethodservice.InputMethodService;
 import android.inputmethodservice.Keyboard;
 import android.inputmethodservice.KeyboardView;
+import android.net.Uri;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.view.inputmethod.InputConnection;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -29,6 +37,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ExecutorService;
+
+import static java.security.AccessController.getContext;
 
 /*
 todo list:
@@ -163,12 +173,36 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
 
     public void dbDelWord(final String pattern) {
-        new Thread(() -> {
-            int result = mWordDb.wordDao().delete(pattern);
-            if (result < 1) {
-                Log.w("dbdDelWord", "tried to delete word that doesn't exist: " + pattern);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        builder.setTitle(R.string.alert_delete_confirmation);
+
+        builder.setPositiveButton("delete", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                new Thread(() -> {
+                    int result = mWordDb.wordDao().delete(pattern);
+                    if (result < 1) {
+                        Log.w("dbdDelWord", "tried to delete word that doesn't exist: " + pattern);
+                    }
+
+
+                }).start();
+                setCandy();
+                setCandidatesView(getCandyView());
             }
-        }).start();
+        });
+
+        builder.setNegativeButton("cancel", new DialogInterface.OnClickListener() {
+            @Override
+            public void onClick(DialogInterface dialog, int which) {
+                dialog.cancel();
+            }
+        });
+
+        AlertDialog ad = builder.create();
+        ad.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
+
+        ad.show();
     }
 
 
@@ -196,13 +230,27 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return keyboardView;
     }
 
+    //final boolean overlayEnabled = Settings.canDrawOverlays(getApplicationContext(MainActivity.this));
 
     @Override
     public View onCreateInputView() {
+        //if (!overlayEnabled) {
+        //    openOverlaySettings();
+        //}
         dbInit();
         return getKeyboardView("MAIN");
     }
 
+    private void openOverlaySettings() {
+        Log.i("overlay", "got here");
+        final Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
+                //,Uri.parse("package:" + getPackageName()));
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            Log.e("MainActivity", e.getMessage());
+        }
+    }
 
     public View getCandyView() {
         /* candidate view rebuilt with new candidates on every key press
@@ -222,6 +270,43 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         mCandyText2.setText(mCandy2);
         mCandyText3.setText(mCandy3);
 
+        mCandyText1.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                Log.d("yisss", "we got here");
+                String clickedWord = mCandyText1.getText().toString();
+                InputConnection ic = getCurrentInputConnection();
+
+                if (ic != null) {
+                    String inText;
+                    inText = ic.getTextBeforeCursor(15, 0).toString();
+
+                    for (int x = inText.length() - 1; x >= 0; x--) {
+                        if (!Character.isLetter(inText.charAt(x))) {
+                            if (inText.charAt(x) == '\'') continue;
+
+                            inText = inText.substring(inText.length() - (inText.length() - x) + 1);
+                            break;
+                        }
+                    }
+                    ic.deleteSurroundingText(inText.length(), 0);
+                    ic.commitText(clickedWord + " ", 1);
+                    dbAddWord(clickedWord);
+                }
+            }
+        });
+
+        mCandyText1.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                Log.d("yisss", "we got long clicks up in here");
+                String clickedWord = mCandyText1.getText().toString();
+
+                Log.d("yisss", "about to delete: " + clickedWord);
+                dbDelWord(clickedWord);
+                return true;
+            }
+        });
         return candyView;
     }
 
@@ -239,7 +324,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         TextView tv = v.findViewById(v.getId());
         String clickedWord = tv.getText().toString();
         InputConnection ic = getCurrentInputConnection();
-//        CorrectionInfo cob;
 
         if (ic != null) {
             String inText;
