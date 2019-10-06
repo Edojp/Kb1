@@ -13,7 +13,6 @@ import android.text.TextUtils;
 import android.util.Log;
 import android.view.KeyEvent;
 import android.view.View;
-import android.view.Window;
 import android.view.WindowManager;
 import android.view.inputmethod.InputConnection;
 import android.widget.TextView;
@@ -30,7 +29,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.security.InvalidParameterException;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -38,10 +36,9 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ExecutorService;
 
-import static java.security.AccessController.getContext;
-
 /*
 todo list:
+ -track cursor position
  -predict next word based off previous (how many?) word(s)
  -rewrite to ditch KeyboardView, has been deprecated as "convenience class"
  -gesture-based input
@@ -50,15 +47,17 @@ todo list:
  */
 
 public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboardActionListener {
-    private KeyboardView keyboardView;
-    private Keyboard keyboard;
-    private boolean caps;
-    private boolean CANDY_ACTIVE = true;
+    private KeyboardView mKeyboardView;
+    private View mCandyView;
+    private Keyboard mKeyboard;
+    private boolean mCapsEnabled;
     private String mCandy1, mCandy2, mCandy3;
     private static final String DATABASE_NAME = "dic_en_db";
     private WordRoomDatabase mWordDb;
-    private final int MAX_SEEK = 15;
-    boolean mShowCandy = false;
+    private final int MAX_SEEK_CHARS = 15;
+    private int mCursorPos;
+    private TextView mCandyText1, mCandyText2, mCandyText3;
+
 
     public boolean importWordlist() {
         Log.d("inportWordList", "attempting to import word list from xml");
@@ -84,6 +83,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         return false;
     }
+
 
     public void dbInit(){
         mWordDb = Room.databaseBuilder(getApplicationContext(),
@@ -174,9 +174,11 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
     public void dbDelWord(final String pattern) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle(R.string.alert_delete_confirmation);
 
-        builder.setPositiveButton("delete", new DialogInterface.OnClickListener() {
+        builder.setTitle(R.string.alert_delete_title);
+        builder.setMessage(getResources().getString(R.string.alert_delete_message, pattern));
+
+        builder.setPositiveButton(R.string.alert_button_delete, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
                 new Thread(() -> {
@@ -185,14 +187,14 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                         Log.w("dbdDelWord", "tried to delete word that doesn't exist: " + pattern);
                     }
 
-
+                    // refresh view
+                    setCandy();
+                    //setCandidatesView(initCandyView());
                 }).start();
-                setCandy();
-                setCandidatesView(getCandyView());
             }
         });
 
-        builder.setNegativeButton("cancel", new DialogInterface.OnClickListener() {
+        builder.setNegativeButton(R.string.alert_button_cancel, new DialogInterface.OnClickListener() {
             @Override
             public void onClick(DialogInterface dialog, int which) {
                 dialog.cancel();
@@ -201,7 +203,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         AlertDialog ad = builder.create();
         ad.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
-
         ad.show();
     }
 
@@ -215,21 +216,22 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         switch (layout) {
             case "MAIN":
-                keyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
-                keyboard = new Keyboard(this, mainLayout);
+                mKeyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
+                mKeyboard = new Keyboard(this, mainLayout);
                 break;
             case "SUB":
-                keyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
-                keyboard = new Keyboard(this, subLayout);
+                mKeyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
+                mKeyboard = new Keyboard(this, subLayout);
                 break;
         }
 
-        keyboardView.setKeyboard(keyboard);
-        keyboardView.setOnKeyboardActionListener(this);
+        mKeyboardView.setKeyboard(mKeyboard);
+        mKeyboardView.setOnKeyboardActionListener(this);
 
-        return keyboardView;
+        return mKeyboardView;
     }
 
+    //todo fix this - automatically open relevant settings screen if no access
     //final boolean overlayEnabled = Settings.canDrawOverlays(getApplicationContext(MainActivity.this));
 
     @Override
@@ -241,10 +243,11 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return getKeyboardView("MAIN");
     }
 
+
     private void openOverlaySettings() {
         Log.i("overlay", "got here");
-        final Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION);
-                //,Uri.parse("package:" + getPackageName()));
+        final Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION
+                ,Uri.parse("package:" + getPackageName()));
         try {
             startActivity(intent);
         } catch (ActivityNotFoundException e) {
@@ -252,82 +255,105 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
     }
 
-    public View getCandyView() {
-        /* candidate view rebuilt with new candidates on every key press
-        todo Probably more efficient to create once and just hide/show/update the text views
-        as required than keep recreating the whole view over and over*/
 
-        TextView mCandyText1, mCandyText2, mCandyText3;
-        View candyView = getLayoutInflater().inflate(R.layout.layout_candy, null);
+    public void initCandyView() {
+        // get latest candidates based on ic text
+        setCandy();
 
-        mCandyText1 = candyView.findViewById(R.id.text_candy1);
-        mCandyText2 = candyView.findViewById(R.id.text_candy2);
-        mCandyText3 = candyView.findViewById(R.id.text_candy3);
+        // create the view if it doesn't exist
+        if (mCandyView == null) {
+            mCandyView = getLayoutInflater().inflate(R.layout.layout_candy, null);
 
-        if(!setCandy()) return null;
+            mCandyText1 = mCandyView.findViewById(R.id.text_candy1);
+            mCandyText2 = mCandyView.findViewById(R.id.text_candy2);
+            mCandyText3 = mCandyView.findViewById(R.id.text_candy3);
 
+            //TODO probably don't need to refetch text from the view, can use mCandy1/2/3 ?
+            mCandyText1.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+//                    String clickedWord = mCandyText1.getText().toString();
+
+                    // TODO do we need this check? will this ever happen?
+                    if (!mCandy1.isEmpty()) {
+                        commitClickedWord(mCandy1);
+                    }
+                }
+            });
+
+            mCandyText1.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+           //         String clickedWord = mCandyText1.getText().toString();
+
+                    if (!mCandy1.isEmpty()) {
+                        dbDelWord(mCandy1);
+                    }
+                    return true;
+                }
+            });
+
+            mCandyText2.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    String clickedWord = mCandyText2.getText().toString();
+
+                    if (!clickedWord.isEmpty()) {
+                        commitClickedWord(clickedWord);
+                    }
+                }
+            });
+
+            // TODO what if user long presses a new word (candidate for dictionary add)?
+            mCandyText2.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+                    String clickedWord = mCandyText2.getText().toString();
+
+                    if (!clickedWord.isEmpty()) {
+                        dbDelWord(clickedWord);
+                    }
+                    return true;
+                }
+            });
+
+            mCandyText3.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    String clickedWord = mCandyText3.getText().toString();
+
+                    if (!clickedWord.isEmpty()) {
+                        commitClickedWord(clickedWord);
+                    }
+                }
+            });
+
+            mCandyText3.setOnLongClickListener(new View.OnLongClickListener() {
+                @Override
+                public boolean onLongClick(View v) {
+                    String clickedWord = mCandyText3.getText().toString();
+
+                    if (!clickedWord.isEmpty()) {
+                        dbDelWord(clickedWord);
+                    }
+                    return true;
+                }
+            });
+        }
+
+        // update textviews with latest candidates
         mCandyText1.setText(mCandy1);
         mCandyText2.setText(mCandy2);
         mCandyText3.setText(mCandy3);
-
-        mCandyText1.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                Log.d("yisss", "we got here");
-                String clickedWord = mCandyText1.getText().toString();
-                InputConnection ic = getCurrentInputConnection();
-
-                if (ic != null) {
-                    String inText;
-                    inText = ic.getTextBeforeCursor(15, 0).toString();
-
-                    for (int x = inText.length() - 1; x >= 0; x--) {
-                        if (!Character.isLetter(inText.charAt(x))) {
-                            if (inText.charAt(x) == '\'') continue;
-
-                            inText = inText.substring(inText.length() - (inText.length() - x) + 1);
-                            break;
-                        }
-                    }
-                    ic.deleteSurroundingText(inText.length(), 0);
-                    ic.commitText(clickedWord + " ", 1);
-                    dbAddWord(clickedWord);
-                }
-            }
-        });
-
-        mCandyText1.setOnLongClickListener(new View.OnLongClickListener() {
-            @Override
-            public boolean onLongClick(View v) {
-                Log.d("yisss", "we got long clicks up in here");
-                String clickedWord = mCandyText1.getText().toString();
-
-                Log.d("yisss", "about to delete: " + clickedWord);
-                dbDelWord(clickedWord);
-                return true;
-            }
-        });
-        return candyView;
     }
 
 
-    @Override
-    public View onCreateCandidatesView() {
-        return getCandyView();
-    }
-
-
-    // looks unused but actually is, called on candidate tap
-    public void onCandyClick(View v){
-        /* retrieve the contents of the textview that called this
-        and commit to input i.e. user accepted candidate */
-        TextView tv = v.findViewById(v.getId());
-        String clickedWord = tv.getText().toString();
+    public void commitClickedWord(String word) {
         InputConnection ic = getCurrentInputConnection();
 
         if (ic != null) {
             String inText;
-            inText = ic.getTextBeforeCursor(15, 0).toString();
+            inText = ic.getTextBeforeCursor(MAX_SEEK_CHARS, 0).toString();
 
             for (int x = inText.length() - 1; x >= 0; x--) {
                 if (!Character.isLetter(inText.charAt(x))) {
@@ -337,45 +363,28 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     break;
                 }
             }
-            ic.deleteSurroundingText(inText.length(),0);
-            ic.commitText(clickedWord + " ",1);
-            dbAddWord(clickedWord);
-
-            clearCandy();
-
-            /*
-            try {
-                WordEn word = dbGetSingleWord(clickedWord);
-                Toast.makeText(this,word.getWord() + " usage: " +
-                    Integer.toString(word.getUsage()), Toast.LENGTH_LONG).show();
-            } catch (InterruptedException e) {
-            } catch (ExecutionException e) {
-            }
-            */
+            ic.deleteSurroundingText(inText.length(), 0);
+            ic.commitText(word + " ", 1);
+            dbAddWord(word);
         }
     }
 
-    public void clearCandy() {
-        Log.d("clearCandy", "running");
-        mCandy1 = "";
-        mCandy2 = "";
-        mCandy3 = "";
+
+    @Override
+    public View onCreateCandidatesView() {
+        initCandyView();
+        return mCandyView;
     }
 
-    public boolean setCandy() { //todo why is this boolean, shouldnt this return the candidates?
-        /*
-        todo this will be most of the work i'm guessing:
-         1. look at the text (how much?) in the input field
-         2. identify the chars we want to start suggesting candidates on
-         3. call dictionary db and return <= 3 suitable candidates
-         */
+
+    public void setCandy() {
         InputConnection ic = getCurrentInputConnection();
 
         if (ic != null) {
             String inText;
 
             // work backwards from cursor until we find a non letter character
-            inText = ic.getTextBeforeCursor(MAX_SEEK, 0).toString();
+            inText = ic.getTextBeforeCursor(MAX_SEEK_CHARS, 0).toString();
 
             for (int x = inText.length() - 1; x >= 0; x--) {
                 if (!Character.isLetter(inText.charAt(x))) {
@@ -390,56 +399,44 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
              */
 
             try {
-                List<WordEn> db_words = dbGetWords(inText);
+                // query should only return a max of 3
+                List<WordEn> candidates = dbGetWords(inText);
 
-                if (db_words != null && !db_words.isEmpty()) {
-                    // sort returned db_words by usage
-                    db_words.sort(Comparator.comparing(WordEn::getUsage).reversed());
-
-                    switch (db_words.size()) {
+                if (candidates != null && !candidates.isEmpty()) {
+                    switch (candidates.size()) {
                         case 1:
                             mCandy1 = "";
-                            mCandy2 = db_words.get(0).getWord();
+                            mCandy2 = candidates.get(0).getWord();
                             mCandy3 = "";
                             break;
                         case 2:
                             mCandy1 = "";
-                            mCandy2 = db_words.get(0).getWord();
-                            mCandy3 = db_words.get(1).getWord();
+                            mCandy2 = candidates.get(0).getWord();
+                            mCandy3 = candidates.get(1).getWord();
                             break;
                         default:
-                            mCandy1 = db_words.get(2).getWord();
-                            mCandy2 = db_words.get(0).getWord();
-                            mCandy3 = db_words.get(1).getWord();
+                            mCandy1 = candidates.get(2).getWord();
+                            mCandy2 = candidates.get(0).getWord();
+                            mCandy3 = candidates.get(1).getWord();
                     }
-                    return true;
                 }
-            } catch (ExecutionException ee) {
-                Toast.makeText(this, "thread exception fetching candidates from db",
-                        Toast.LENGTH_LONG).show();
-            } catch (InterruptedException ie) {
-                Toast.makeText(this, "thread exception fetching candidates from db",
-                        Toast.LENGTH_LONG).show();
+                // if no suggestions returned, show entered word as only candidate
+                //TODO how do we present a new word (for adding) that's a substring
+                // of existing candidates? e.g. "goo"
+                else {
+                    mCandy1 = "";
+                    mCandy2 = inText;
+                    mCandy3 = "";
+                }
+            } catch (ExecutionException | InterruptedException e) {
+                Log.e("setCandy",  e.getMessage());
             }
-
-            // if no suggestions returned, show entered word as only candidate
-            mCandy1 = "";
-            mCandy2 = inText;
-            mCandy3 = "";
-
-            return true;
-        }
-        else {
-            return false;
         }
     }
 
 
     @Override
     public void onKey(int primaryCode, int[] keyCodes) {
-
-        View candyView;
-
         InputConnection ic = getCurrentInputConnection();
         if (ic != null) {
             /*
@@ -448,6 +445,10 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
              and let us get rid of horrible hacks like code 666, 999 etc.
              this will require ditching KeyboardView (has been deprecated anyway)
              */
+
+            // when should this be false?
+            setCandidatesViewShown(true);
+
             switch(primaryCode) {
                 case Keyboard.KEYCODE_DELETE:
                     /*
@@ -464,13 +465,12 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                             } else {
                                 ic.deleteSurroundingText(1, 0);
                             }
-                            mShowCandy = true;
                         }
                     break;
                 case Keyboard.KEYCODE_SHIFT:
-                    caps = !caps;
-                    keyboard.setShifted(caps);
-                    keyboardView.invalidateAllKeys();
+                    mCapsEnabled = !mCapsEnabled;
+                    mKeyboard.setShifted(mCapsEnabled);
+                    mKeyboardView.invalidateAllKeys();
                     break;
                 case Keyboard.KEYCODE_DONE:
                     ic.sendKeyEvent(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER));
@@ -491,30 +491,16 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     break;
                 default:
                     char code = (char) primaryCode;
-                    if (Character.isLetter(code) && caps) {
+                    if (Character.isLetter(code) && mCapsEnabled) {
                         code = Character.toUpperCase(code);
                     }
                     ic.commitText(String.valueOf(code), 1);
-                    mShowCandy = true;
             }
-
-            if (mShowCandy && CANDY_ACTIVE) {
-                candyView = getCandyView();
-                if (candyView != null) {
-                    setCandidatesView(candyView);
-                    setCandidatesViewShown(true);
-                } else {
-                    setCandidatesViewShown(false);
-                }
-            } else {
-                setCandidatesViewShown(false);
-            }
+            initCandyView();
         }
     }
 
-    /*
-    can't imagine needing to use any of these
-     */
+    //can't imagine needing to use any of these
     @Override
     public void onText(CharSequence text) {
     }
