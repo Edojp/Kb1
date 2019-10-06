@@ -14,6 +14,8 @@ public interface WordDao {
     @Query("DELETE from dictionary_en WHERE word = :word")
     int delete(String word);
 
+    // put a limit here so we don't get several hundred word candidate lists
+    // whenever users types the first character
     @Query("SELECT * from dictionary_en WHERE word LIKE (:pattern || '%') ORDER BY count DESC LIMIT 3")
     List<WordEn> getWords(String pattern);
 

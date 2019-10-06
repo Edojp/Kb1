@@ -52,7 +52,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private Keyboard mKeyboard;
     private boolean mCapsEnabled;
     private String mCandy1, mCandy2, mCandy3;
-    private static final String DATABASE_NAME = "dic_en_db";
+    private static final String DB_TABLE_EN = "dic_en_db";
     private WordRoomDatabase mWordDb;
     private final int MAX_SEEK_CHARS = 15;
     private int mCursorPos;
@@ -87,7 +87,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
     public void dbInit(){
         mWordDb = Room.databaseBuilder(getApplicationContext(),
-                WordRoomDatabase.class, DATABASE_NAME)
+                WordRoomDatabase.class, DB_TABLE_EN)
                 .fallbackToDestructiveMigration()
                 .build();
 
@@ -172,6 +172,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
+    // present confirmation alert and delete word from db
     public void dbDelWord(final String pattern) {
         AlertDialog.Builder builder = new AlertDialog.Builder(this);
 
@@ -187,10 +188,9 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                         Log.w("dbdDelWord", "tried to delete word that doesn't exist: " + pattern);
                     }
 
-                    // refresh view
-                    setCandy();
-                    //setCandidatesView(initCandyView());
                 }).start();
+                // refresh view
+                initCandyView();
             }
         });
 
@@ -204,6 +204,16 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         AlertDialog ad = builder.create();
         ad.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
         ad.show();
+    }
+
+
+    // stops the candidate bar overlapping the app (because ??)
+    @Override
+    public void onComputeInsets(InputMethodService.Insets outInsets) {
+        super.onComputeInsets(outInsets);
+        if (!isFullscreenMode()) {
+            outInsets.contentTopInsets = outInsets.visibleTopInsets;
+        }
     }
 
 
@@ -227,6 +237,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         mKeyboardView.setKeyboard(mKeyboard);
         mKeyboardView.setOnKeyboardActionListener(this);
+        initCandyView();
+        setCandidatesViewShown(true);
 
         return mKeyboardView;
     }
@@ -268,12 +280,9 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText2 = mCandyView.findViewById(R.id.text_candy2);
             mCandyText3 = mCandyView.findViewById(R.id.text_candy3);
 
-            //TODO probably don't need to refetch text from the view, can use mCandy1/2/3 ?
             mCandyText1.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-//                    String clickedWord = mCandyText1.getText().toString();
-
                     // TODO do we need this check? will this ever happen?
                     if (!mCandy1.isEmpty()) {
                         commitClickedWord(mCandy1);
@@ -284,8 +293,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText1.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
-           //         String clickedWord = mCandyText1.getText().toString();
-
                     if (!mCandy1.isEmpty()) {
                         dbDelWord(mCandy1);
                     }
@@ -296,10 +303,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText2.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    String clickedWord = mCandyText2.getText().toString();
-
-                    if (!clickedWord.isEmpty()) {
-                        commitClickedWord(clickedWord);
+                    if (!mCandy2.isEmpty()) {
+                        commitClickedWord(mCandy2);
                     }
                 }
             });
@@ -308,10 +313,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText2.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
-                    String clickedWord = mCandyText2.getText().toString();
-
-                    if (!clickedWord.isEmpty()) {
-                        dbDelWord(clickedWord);
+                    if (!mCandy2.isEmpty()) {
+                        dbDelWord(mCandy2);
                     }
                     return true;
                 }
@@ -320,10 +323,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText3.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    String clickedWord = mCandyText3.getText().toString();
-
-                    if (!clickedWord.isEmpty()) {
-                        commitClickedWord(clickedWord);
+                    if (!mCandy3.isEmpty()) {
+                        commitClickedWord(mCandy3);
                     }
                 }
             });
@@ -331,10 +332,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText3.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
-                    String clickedWord = mCandyText3.getText().toString();
-
-                    if (!clickedWord.isEmpty()) {
-                        dbDelWord(clickedWord);
+                    if (!mCandy3.isEmpty()) {
+                        dbDelWord(mCandy3);
                     }
                     return true;
                 }
@@ -345,6 +344,24 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         mCandyText1.setText(mCandy1);
         mCandyText2.setText(mCandy2);
         mCandyText3.setText(mCandy3);
+
+        if(mCandyText1.getText().equals("")) {
+            mCandyText1.setBackgroundResource(R.color.colorPrimaryDark);
+        } else {
+            mCandyText1.setBackgroundResource(R.drawable.rounded_corners);
+        }
+
+        if(mCandyText2.getText().equals("")) {
+            mCandyText2.setBackgroundResource(R.color.colorPrimaryDark);
+        } else {
+            mCandyText2.setBackgroundResource(R.drawable.rounded_corners);
+        }
+
+        if(mCandyText3.getText().equals("")) {
+            mCandyText3.setBackgroundResource(R.color.colorPrimaryDark);
+        } else {
+            mCandyText3.setBackgroundResource(R.drawable.rounded_corners);
+        }
     }
 
 
@@ -428,6 +445,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     mCandy2 = inText;
                     mCandy3 = "";
                 }
+
             } catch (ExecutionException | InterruptedException e) {
                 Log.e("setCandy",  e.getMessage());
             }
