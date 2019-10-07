@@ -38,7 +38,7 @@ import java.util.concurrent.ExecutorService;
 
 /*
 todo list:
- -track cursor position
+ -track cursor position?
  -predict next word based off previous (how many?) word(s)
  -rewrite to ditch KeyboardView, has been deprecated as "convenience class"
  -gesture-based input
@@ -60,6 +60,67 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private TextView mCandyText1, mCandyText2, mCandyText3;
     private WordEn mLastWord;
 
+    //todo fix this - automatically open relevant settings screen if no access
+    //final boolean overlayEnabled = Settings.canDrawOverlays(getApplicationContext(MainActivity.this));
+
+    @Override
+    public View onCreateInputView() {
+        //if (!overlayEnabled) {
+        //    openOverlaySettings();
+        //}
+        dbInit();
+        return getKeyboardView("MAIN");
+    }
+
+
+    private void openOverlaySettings() {
+        Log.i("overlay", "got here");
+        final Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION
+                ,Uri.parse("package:" + getPackageName()));
+        try {
+            startActivity(intent);
+        } catch (ActivityNotFoundException e) {
+            Log.e("MainActivity", e.getMessage());
+        }
+    }
+
+
+    // stops the candidate bar overlapping the app (because ??)
+    @Override
+    public void onComputeInsets(InputMethodService.Insets outInsets) {
+        super.onComputeInsets(outInsets);
+        if (!isFullscreenMode()) {
+            outInsets.contentTopInsets = outInsets.visibleTopInsets;
+        }
+    }
+
+
+    public View getKeyboardView(String layout) {
+        /*
+        todo Add some logic to specify alternate mainLayout e.g. dvorak, alphabetical
+         */
+        int mainLayout = R.layout.layout_qwerty;
+        int subLayout = R.layout.layout_sub;
+
+        switch (layout) {
+            case "MAIN":
+                mKeyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
+                mKeyboard = new Keyboard(this, mainLayout);
+                break;
+            case "SUB":
+                mKeyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
+                mKeyboard = new Keyboard(this, subLayout);
+                break;
+        }
+
+        mKeyboardView.setKeyboard(mKeyboard);
+        mKeyboardView.setOnKeyboardActionListener(this);
+        initCandyView(getCandy());
+        setCandidatesViewShown(true);
+
+        return mKeyboardView;
+    }
+
 
     public boolean importWordlist() {
         Log.d("inportWordList", "attempting to import word list from xml");
@@ -77,8 +138,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         if (!words.isEmpty()) {
             Log.i("importWordList", "importing " + words.size() + " entries");
-            for (String word : words) {
-                dbAddWord(word);
+            for (String pattern : words) {
+                dbAddWord(new WordEn(pattern));
             }
             return true;
         }
@@ -157,13 +218,28 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
-
-
     public void dbUpdateFollowWords(final WordEn word, final String pattern) {
         new Thread(() -> {
-            mWordDb.wordDao().setFollowWords(word.getId(), pattern);
+            String out = pattern;
+            String fw = word.getFollowWords();
+
+            if (fw != null) {
+                List<String> candidates = parseFollowWords(fw);
+
+                // should not have more than 3
+                int shift = 0;
+                if (candidates.size() > 2) {
+                    shift = candidates.size() - 2;
+                }
+                for (int x = 0; x < candidates.size() - shift; x++) {
+                    out += "," + candidates.get(x);
+                }
+            }
+
+            mWordDb.wordDao().setFollowWords(word.getId(), out);
         }).start();
     }
+
 
     public List<String> parseFollowWords(String fw) {
         // create a list of usable candidates from input string stored in db
@@ -183,6 +259,22 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
 
         return candidates;
+    }
+
+
+    public void dbAddWord(WordEn word) {
+        new Thread(() -> {
+            mWordDb.wordDao().insert(word);
+        }).start();
+
+    }
+
+
+    public void dbUpdateWordUsage(WordEn word) {
+        new Thread (() -> {
+            int usage = word.getUsage();
+            mWordDb.wordDao().setUsage(word.getId(), ++usage);
+        }).start();
     }
 
 
@@ -254,20 +346,27 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             // commit from 2nd character onwards if replacing existing word
             ic.commitText(text.substring(shift) + " ", 1);
 
+
             try {
                 WordEn word = dbGetSingleWord(text.toLowerCase());
 
                 if (word == null) {
-                    dbAddWord(text.toLowerCase());
+                    word = new WordEn(text.toLowerCase());
+                    dbAddWord(word);
                 } else {
                     dbUpdateWordUsage(word);
-                    mLastWord = word;
 
                     if (word.getFollowWords() != null) {
                         List<String> candidates = parseFollowWords(word.getFollowWords());
                         initCandyView(candidates);
                     }
                 }
+
+                if (mLastWord != null) {
+                    dbUpdateFollowWords(mLastWord, word.getWord());
+                }
+                mLastWord = word;
+
             } catch (InterruptedException | ExecutionException e) {
                 Log.e("commitclickedword", e.getMessage());
             }
@@ -275,78 +374,44 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
-    public void dbAddWord(String pattern) {
-        new Thread(() -> {
-            mWordDb.wordDao().insert(new WordEn(pattern));
-        }).start();
-    }
+    public List<String> getCandy() {
+        List<String> candidates = new ArrayList<>();
 
-    public void dbUpdateWordUsage(WordEn word) {
-        new Thread (() -> {
-            int usage = word.getUsage();
-            mWordDb.wordDao().setUsage(word.getId(), ++usage);
-        }).start();
-    }
+        InputConnection ic = getCurrentInputConnection();
 
+        if (ic != null) {
+            String inText;
 
-    // stops the candidate bar overlapping the app (because ??)
-    @Override
-    public void onComputeInsets(InputMethodService.Insets outInsets) {
-        super.onComputeInsets(outInsets);
-        if (!isFullscreenMode()) {
-            outInsets.contentTopInsets = outInsets.visibleTopInsets;
+            // work backwards from cursor until we find a non letter character
+            inText = ic.getTextBeforeCursor(MAX_SEEK_CHARS, 0).toString();
+
+            for (int x = inText.length() - 1; x >= 0; x--) {
+                if (!Character.isLetter(inText.charAt(x))) {
+                    if (inText.charAt(x) == '\'' || inText.charAt(x) == '-') {
+                        continue;
+                    }
+
+                    inText = inText.substring(x+1);
+                    break;
+                }
+            }
+
+            try {
+                // query should only return a max of 3
+                List<WordEn> words = dbGetWords(inText);
+
+                for (WordEn word : words) {
+                    candidates.add(word.getWord());
+                }
+
+                //TODO how do we present a new word (for adding) that's a substring
+                // of existing candidates? e.g. "goo"
+
+            } catch (ExecutionException | InterruptedException e) {
+                Log.e("setCandy",  e.getMessage());
+            }
         }
-    }
-
-
-    public View getKeyboardView(String layout) {
-        /*
-        todo Add some logic to specify alternate mainLayout e.g. dvorak, alphabetical
-         */
-        int mainLayout = R.layout.layout_qwerty;
-        int subLayout = R.layout.layout_sub;
-
-        switch (layout) {
-            case "MAIN":
-                mKeyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
-                mKeyboard = new Keyboard(this, mainLayout);
-                break;
-            case "SUB":
-                mKeyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
-                mKeyboard = new Keyboard(this, subLayout);
-                break;
-        }
-
-        mKeyboardView.setKeyboard(mKeyboard);
-        mKeyboardView.setOnKeyboardActionListener(this);
-        initCandyView(getCandy());
-        setCandidatesViewShown(true);
-
-        return mKeyboardView;
-    }
-
-    //todo fix this - automatically open relevant settings screen if no access
-    //final boolean overlayEnabled = Settings.canDrawOverlays(getApplicationContext(MainActivity.this));
-
-    @Override
-    public View onCreateInputView() {
-        //if (!overlayEnabled) {
-        //    openOverlaySettings();
-        //}
-        dbInit();
-        return getKeyboardView("MAIN");
-    }
-
-
-    private void openOverlaySettings() {
-        Log.i("overlay", "got here");
-        final Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION
-                ,Uri.parse("package:" + getPackageName()));
-        try {
-            startActivity(intent);
-        } catch (ActivityNotFoundException e) {
-            Log.e("MainActivity", e.getMessage());
-        }
+        return candidates;
     }
 
 
@@ -467,47 +532,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     public View onCreateCandidatesView() {
         initCandyView(getCandy());
         return mCandyView;
-    }
-
-
-    public List<String> getCandy() {
-        List<String> candidates = new ArrayList<>();
-
-        InputConnection ic = getCurrentInputConnection();
-
-        if (ic != null) {
-            String inText;
-
-            // work backwards from cursor until we find a non letter character
-            inText = ic.getTextBeforeCursor(MAX_SEEK_CHARS, 0).toString();
-
-            for (int x = inText.length() - 1; x >= 0; x--) {
-                if (!Character.isLetter(inText.charAt(x))) {
-                    if (inText.charAt(x) == '\'' || inText.charAt(x) == '-') {
-                        continue;
-                    }
-
-                    inText = inText.substring(x+1);
-                    break;
-                }
-            }
-
-            try {
-                // query should only return a max of 3
-                List<WordEn> words = dbGetWords(inText);
-
-                for (WordEn word : words) {
-                    candidates.add(word.getWord());
-                }
-
-                //TODO how do we present a new word (for adding) that's a substring
-                // of existing candidates? e.g. "goo"
-
-            } catch (ExecutionException | InterruptedException e) {
-                Log.e("setCandy",  e.getMessage());
-            }
-        }
-        return candidates;
     }
 
 
