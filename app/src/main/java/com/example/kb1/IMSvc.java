@@ -345,19 +345,19 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         mCandyText2.setText(mCandy2);
         mCandyText3.setText(mCandy3);
 
-        if(mCandyText1.getText().equals("")) {
+        if (mCandyText1.getText().equals("")) {
             mCandyText1.setBackgroundResource(R.color.colorPrimaryDark);
         } else {
             mCandyText1.setBackgroundResource(R.drawable.rounded_corners);
         }
 
-        if(mCandyText2.getText().equals("")) {
+        if (mCandyText2.getText().equals("")) {
             mCandyText2.setBackgroundResource(R.color.colorPrimaryDark);
         } else {
             mCandyText2.setBackgroundResource(R.drawable.rounded_corners);
         }
 
-        if(mCandyText3.getText().equals("")) {
+        if (mCandyText3.getText().equals("")) {
             mCandyText3.setBackgroundResource(R.color.colorPrimaryDark);
         } else {
             mCandyText3.setBackgroundResource(R.drawable.rounded_corners);

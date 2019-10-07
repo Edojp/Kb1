@@ -3,7 +3,7 @@
     android:layout_alignParentTop="true"
     android:id="@+id/candyLayout"
     android:layout_width="fill_parent"
-    android:layout_height="40dp"
+    android:layout_height="wrap_content"
     android:background="@color/colorPrimaryDark"
     android:gravity="center"
     android:orientation="horizontal">
@@ -12,26 +12,33 @@
         android:id="@+id/text_candy1"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:layout_marginBottom="2dp"
+        android:layout_marginEnd="10dp"
         android:paddingHorizontal="10dp"
-        android:layout_marginRight="10dp"
+
         android:text="@string/placeholder"
         android:background="@drawable/rounded_corners"
         android:textColor="@color/colorLightText"
-        android:textSize="24sp"
-        android:clickable="true"
+        android:textSize="20sp"
 
+        android:clickable="true"
         />
 
     <TextView
         android:id="@+id/text_candy2"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:layout_marginBottom="2dp"
+        android:layout_marginEnd="10dp"
         android:paddingHorizontal="10dp"
-        android:layout_marginRight="10dp"
+
         android:background="@drawable/rounded_corners"
         android:text="@string/placeholder"
         android:textColor="@color/colorLightText"
-        android:textSize="24sp"
+        android:textSize="20sp"
+
         android:clickable="true"
         />
 
@@ -39,11 +46,15 @@
         android:id="@+id/text_candy3"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:layout_marginBottom="2dp"
         android:paddingHorizontal="10dp"
+
         android:background="@drawable/rounded_corners"
         android:text="@string/placeholder"
         android:textColor="@color/colorLightText"
-        android:textSize="24sp"
+        android:textSize="20sp"
+
         android:clickable="true"
         />
 
