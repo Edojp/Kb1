@@ -58,6 +58,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private final int MAX_SEEK_CHARS = 15;
     private int mCursorPos;
     private TextView mCandyText1, mCandyText2, mCandyText3;
+    private WordEn mLastWord;
 
 
     public boolean importWordlist() {
@@ -156,20 +157,32 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
-    public void dbAddWord(final String pattern) {
-        /*
-        Query to see if exists, if not add to database, else
-        increment usage and skip
-         */
+
+
+    public void dbUpdateFollowWords(final WordEn word, final String pattern) {
         new Thread(() -> {
-            WordEn word = mWordDb.wordDao().getSingleWord(pattern);
-            if (word == null) {
-                mWordDb.wordDao().insert(new WordEn(pattern));
-            } else {
-                int usage = word.getUsage();
-                mWordDb.wordDao().setUsage(word.getId(), ++usage);
-            }
+            mWordDb.wordDao().setFollowWords(word.getId(), pattern);
         }).start();
+    }
+
+    public List<String> parseFollowWords(String fw) {
+        // create a list of usable candidates from input string stored in db
+        // fw format should be: word1,word2,word3
+
+        List<String> candidates = new ArrayList<>();
+        int start = 0;
+
+        for (int x = 0; x < fw.length(); x++) {
+            if (fw.charAt(x) == ',') {
+                String ss = fw.substring(start, x - 1);
+                if (!ss.isEmpty()) {
+                    candidates.add(ss);
+                }
+                start = x + 1;
+            }
+        }
+
+        return candidates;
     }
 
 
@@ -191,7 +204,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
                 }).start();
                 // refresh view
-                initCandyView();
+                initCandyView(getCandy());
             }
         });
 
@@ -205,6 +218,74 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         AlertDialog ad = builder.create();
         ad.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
         ad.show();
+    }
+
+
+    public void commitClickedWord(String text) {
+        InputConnection ic = getCurrentInputConnection();
+
+        if (ic != null) {
+            String inText;
+            inText = ic.getTextBeforeCursor(MAX_SEEK_CHARS, 0).toString();
+
+            for (int x = inText.length() - 1; x >= 0; x--) {
+                if (!Character.isLetter(inText.charAt(x))) {
+                    if (inText.charAt(x) == '\'' || inText.charAt(x) == '-') {
+                        continue;
+                    }
+
+                    inText = inText.substring(inText.length() - (inText.length() - x) + 1);
+                    break;
+                }
+            }
+            //TODO there's a probably a better of way of doing this...
+            // though does come with added bonus of stripping probably erroneous
+            // second upper case char e.g. "WOrd" -> "Word" and keeps capitalized
+            // words out of the dictionary database
+
+            // need a check here for scenario of accepting the candidate when
+            // no other text is in the field
+            int shift =  0;
+            if (!inText.isEmpty()) {
+                // delete up to (but not including) first character
+                ic.deleteSurroundingText(inText.length() - 1, 0);
+                shift = 1;
+            }
+            // commit from 2nd character onwards if replacing existing word
+            ic.commitText(text.substring(shift) + " ", 1);
+
+            try {
+                WordEn word = dbGetSingleWord(text.toLowerCase());
+
+                if (word == null) {
+                    dbAddWord(text.toLowerCase());
+                } else {
+                    dbUpdateWordUsage(word);
+                    mLastWord = word;
+
+                    if (word.getFollowWords() != null) {
+                        List<String> candidates = parseFollowWords(word.getFollowWords());
+                        initCandyView(candidates);
+                    }
+                }
+            } catch (InterruptedException | ExecutionException e) {
+                Log.e("commitclickedword", e.getMessage());
+            }
+        }
+    }
+
+
+    public void dbAddWord(String pattern) {
+        new Thread(() -> {
+            mWordDb.wordDao().insert(new WordEn(pattern));
+        }).start();
+    }
+
+    public void dbUpdateWordUsage(WordEn word) {
+        new Thread (() -> {
+            int usage = word.getUsage();
+            mWordDb.wordDao().setUsage(word.getId(), ++usage);
+        }).start();
     }
 
 
@@ -238,7 +319,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         mKeyboardView.setKeyboard(mKeyboard);
         mKeyboardView.setOnKeyboardActionListener(this);
-        initCandyView();
+        initCandyView(getCandy());
         setCandidatesViewShown(true);
 
         return mKeyboardView;
@@ -269,10 +350,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
-    public void initCandyView() {
-        // get latest candidates based on ic text
-        setCandy();
-
+    public void initCandyView(List<String> candidates) {
         // create the view if it doesn't exist
         if (mCandyView == null) {
             mCandyView = getLayoutInflater().inflate(R.layout.layout_candy, null);
@@ -285,8 +363,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 @Override
                 public void onClick(View v) {
                     // TODO do we need this check? will this ever happen?
-                    if (!mCandy1.isEmpty()) {
-                        commitClickedWord(mCandy1);
+                    if (!mCandyText1.getText().toString().isEmpty()) {
+                        commitClickedWord(mCandyText1.getText().toString());
                     }
                 }
             });
@@ -294,8 +372,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText1.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
-                    if (!mCandy1.isEmpty()) {
-                        dbDelWord(mCandy1);
+                    if (!mCandyText1.getText().toString().isEmpty()) {
+                        dbDelWord(mCandyText1.getText().toString());
                     }
                     return true;
                 }
@@ -304,8 +382,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText2.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    if (!mCandy2.isEmpty()) {
-                        commitClickedWord(mCandy2);
+                    if (!mCandyText2.getText().toString().isEmpty()) {
+                        commitClickedWord(mCandyText2.getText().toString());
                     }
                 }
             });
@@ -314,8 +392,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText2.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
-                    if (!mCandy2.isEmpty()) {
-                        dbDelWord(mCandy2);
+                    if (!mCandyText2.getText().toString().isEmpty()) {
+                        dbDelWord(mCandyText2.getText().toString());
                     }
                     return true;
                 }
@@ -324,8 +402,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText3.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    if (!mCandy3.isEmpty()) {
-                        commitClickedWord(mCandy3);
+                    if (!mCandyText3.getText().toString().isEmpty()) {
+                        commitClickedWord(mCandyText3.getText().toString());
                     }
                 }
             });
@@ -333,20 +411,39 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText3.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
-                    if (!mCandy3.isEmpty()) {
-                        dbDelWord(mCandy3);
+                    if (!mCandyText3.getText().toString().isEmpty()) {
+                        dbDelWord(mCandyText3.getText().toString());
                     }
                     return true;
                 }
             });
         }
 
-        // update textviews with latest candidates
-        mCandyText1.setText(mCandy1);
-        mCandyText2.setText(mCandy2);
-        mCandyText3.setText(mCandy3);
+        // update textviews with latest candidates depending on how many candidates we got
+        switch (candidates.size()) {
+            case 1:
+                mCandyText1.setText("");
+                mCandyText2.setText(candidates.get(0));
+                mCandyText3.setText("");
+                break;
+            case 2:
+                mCandyText1.setText("");
+                mCandyText2.setText(candidates.get(0));
+                mCandyText3.setText(candidates.get(1));
+                break;
+            case 3:
+                mCandyText1.setText(candidates.get(2));
+                mCandyText2.setText(candidates.get(0));
+                mCandyText3.setText(candidates.get(1));
+                break;
+            default:
+                mCandyText1.setText("");
+                mCandyText2.setText("");
+                mCandyText3.setText("");
+        }
 
         if (mCandyText1.getText().equals("")) {
+            //mCandyText1.is
             mCandyText1.setBackgroundResource(R.color.colorPrimaryDark);
         } else {
             mCandyText1.setBackgroundResource(R.drawable.rounded_corners);
@@ -366,39 +463,16 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
-    public void commitClickedWord(String word) {
-        InputConnection ic = getCurrentInputConnection();
-
-        if (ic != null) {
-            String inText;
-            inText = ic.getTextBeforeCursor(MAX_SEEK_CHARS, 0).toString();
-
-            for (int x = inText.length() - 1; x >= 0; x--) {
-                if (!Character.isLetter(inText.charAt(x))) {
-                    if (inText.charAt(x) == '\'') continue;
-
-                    inText = inText.substring(inText.length() - (inText.length() - x) + 1);
-                    break;
-                }
-            }
-            //TODO there's a probably a better of way of doing this...
-            //preserve the first character in case it starts with upper case
-            ic.deleteSurroundingText(inText.length() - 1, 0);
-            // commit from 2nd character onswards
-            ic.commitText(word.substring(1) + " ", 1);
-            dbAddWord(word);
-        }
-    }
-
-
     @Override
     public View onCreateCandidatesView() {
-        initCandyView();
+        initCandyView(getCandy());
         return mCandyView;
     }
 
 
-    public void setCandy() {
+    public List<String> getCandy() {
+        List<String> candidates = new ArrayList<>();
+
         InputConnection ic = getCurrentInputConnection();
 
         if (ic != null) {
@@ -420,39 +494,20 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
             try {
                 // query should only return a max of 3
-                List<WordEn> candidates = dbGetWords(inText);
+                List<WordEn> words = dbGetWords(inText);
 
-                if (candidates != null && !candidates.isEmpty()) {
-                    switch (candidates.size()) {
-                        case 1:
-                            mCandy1 = "";
-                            mCandy2 = candidates.get(0).getWord();
-                            mCandy3 = "";
-                            break;
-                        case 2:
-                            mCandy1 = "";
-                            mCandy2 = candidates.get(0).getWord();
-                            mCandy3 = candidates.get(1).getWord();
-                            break;
-                        default:
-                            mCandy1 = candidates.get(2).getWord();
-                            mCandy2 = candidates.get(0).getWord();
-                            mCandy3 = candidates.get(1).getWord();
-                    }
+                for (WordEn word : words) {
+                    candidates.add(word.getWord());
                 }
-                // if no suggestions returned, show entered word as only candidate
+
                 //TODO how do we present a new word (for adding) that's a substring
                 // of existing candidates? e.g. "goo"
-                else {
-                    mCandy1 = "";
-                    mCandy2 = inText;
-                    mCandy3 = "";
-                }
 
             } catch (ExecutionException | InterruptedException e) {
                 Log.e("setCandy",  e.getMessage());
             }
         }
+        return candidates;
     }
 
 
@@ -540,7 +595,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     }
             }
           //  Log.d("loop", String.valueOf(mCapsEnabled) + " " + String.valueOf(mCapsLock));
-            initCandyView();
+            initCandyView(getCandy());
         }
     }
 

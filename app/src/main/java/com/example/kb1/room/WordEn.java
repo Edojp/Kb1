@@ -19,6 +19,9 @@ public class WordEn {
     @ColumnInfo(name = "count")
     private int mUsage;
 
+    @ColumnInfo(name = "followWords")
+    private String mFollowWords;
+
     @ColumnInfo(name = "flags")
     private String mFlags;
 
@@ -37,6 +40,14 @@ public class WordEn {
     public int getUsage() { return this.mUsage; }
 
     public void setUsage(int usage) { this.mUsage = usage; }
+
+    public String getFollowWords() {
+        return this.mFollowWords;
+    }
+
+    public void setFollowWords(String followWords) {
+        this.mFollowWords = followWords;
+    }
 
     public String getFlags() {
         return this.mFlags;

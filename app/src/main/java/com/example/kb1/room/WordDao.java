@@ -25,6 +25,9 @@ public interface WordDao {
     @Query("UPDATE dictionary_en SET count = :usage WHERE id = :dbid")
     void setUsage(int dbid, int usage);
 
+    @Query("UPDATE dictionary_en SET followWords = :fw WHERE id = :dbid")
+    void setFollowWords(int dbid, String fw);
+
     @Query("UPDATE dictionary_en SET flags = :flag where id = :dbid")
     void setFlags(int dbid, String flag);
 
