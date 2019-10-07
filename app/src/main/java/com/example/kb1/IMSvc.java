@@ -50,7 +50,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private KeyboardView mKeyboardView;
     private View mCandyView;
     private Keyboard mKeyboard;
-    private boolean mCapsEnabled;
+    private boolean mCapsEnabled = false;
+    private boolean mCapsLock = false;
     private String mCandy1, mCandy2, mCandy3;
     private static final String DB_TABLE_EN = "dic_en_db";
     private WordRoomDatabase mWordDb;
@@ -486,7 +487,18 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                         }
                     break;
                 case Keyboard.KEYCODE_SHIFT:
-                    mCapsEnabled = !mCapsEnabled;
+                    if (mCapsEnabled) {
+                        if (mCapsLock) { // caps on, lock on
+                            mCapsEnabled = false;
+                            mCapsLock = false;
+                        } else { // caps on, lock off
+                            mCapsLock = true;
+                        }
+                    } else { // caps off = lock off
+                        mCapsEnabled = true;
+                        // caps off, lock on should never happen
+                    }
+
                     mKeyboard.setShifted(mCapsEnabled);
                     mKeyboardView.invalidateAllKeys();
                     break;
@@ -513,7 +525,15 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                         code = Character.toUpperCase(code);
                     }
                     ic.commitText(String.valueOf(code), 1);
+
+                    // only want caps on first character (unless locked)
+                    if (!mCapsLock) {
+                        mCapsEnabled = false;
+                        mKeyboard.setShifted(mCapsEnabled);
+                        mKeyboardView.invalidateAllKeys();
+                    }
             }
+          //  Log.d("loop", String.valueOf(mCapsEnabled) + " " + String.valueOf(mCapsLock));
             initCandyView();
         }
     }
