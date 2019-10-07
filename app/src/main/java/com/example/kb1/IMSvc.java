@@ -52,7 +52,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private Keyboard mKeyboard;
     private boolean mCapsEnabled = false;
     private boolean mCapsLock = false;
-    private String mCandy1, mCandy2, mCandy3;
     private static final String DB_TABLE_EN = "dic_en_db";
     private WordRoomDatabase mWordDb;
     private final int MAX_SEEK_CHARS = 15;
@@ -219,6 +218,9 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
 
     public void dbUpdateFollowWords(final WordEn word, final String pattern) {
+        Log.d("dbUpdateFollowWords", "called. word: " + word.getWord() + ", "
+                + "pattern:" + pattern);
+
         new Thread(() -> {
             String out = pattern;
             String fw = word.getFollowWords();
@@ -226,15 +228,23 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             if (fw != null) {
                 List<String> candidates = parseFollowWords(fw);
 
-                // should not have more than 3
+                // don't do anything if word already in pattern or itself
+                if (candidates.contains(word.getWord()) || candidates.contains(pattern)) {
+                    return;
+                }
+
+                // enforce max 3 candidates
                 int shift = 0;
                 if (candidates.size() > 2) {
                     shift = candidates.size() - 2;
                 }
+
                 for (int x = 0; x < candidates.size() - shift; x++) {
                     out += "," + candidates.get(x);
                 }
             }
+
+            Log.d("dbUpdateFollowWords", "db update for word: " + word.getWord() + " fw: " + out);
 
             mWordDb.wordDao().setFollowWords(word.getId(), out);
         }).start();
@@ -244,18 +254,26 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     public List<String> parseFollowWords(String fw) {
         // create a list of usable candidates from input string stored in db
         // fw format should be: word1,word2,word3
+        Log.d("parseFollowWords", "fw: " + fw);
 
         List<String> candidates = new ArrayList<>();
         int start = 0;
 
         for (int x = 0; x < fw.length(); x++) {
             if (fw.charAt(x) == ',') {
-                String ss = fw.substring(start, x - 1);
+                String ss = fw.substring(start, x);
                 if (!ss.isEmpty()) {
                     candidates.add(ss);
                 }
                 start = x + 1;
             }
+        }
+
+        // don't forget last word!
+        candidates.add(fw.substring(start));
+
+        for (String s : candidates) {
+            Log.d("parseFollowWords", "candidate: " + s);
         }
 
         return candidates;
@@ -320,6 +338,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             String inText;
             inText = ic.getTextBeforeCursor(MAX_SEEK_CHARS, 0).toString();
 
+            // work backwards from the cursor until we find something that
+            // isn't a letter/apostrophe/hyphen (usually a space)
             for (int x = inText.length() - 1; x >= 0; x--) {
                 if (!Character.isLetter(inText.charAt(x))) {
                     if (inText.charAt(x) == '\'' || inText.charAt(x) == '-') {
@@ -346,8 +366,11 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             // commit from 2nd character onwards if replacing existing word
             ic.commitText(text.substring(shift) + " ", 1);
 
+            // TODO fix bug where all 3 candidates are same word
 
             try {
+                // attempt to get exact match from db and create new
+                // wordEn object if no hits
                 WordEn word = dbGetSingleWord(text.toLowerCase());
 
                 if (word == null) {
@@ -356,16 +379,21 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 } else {
                     dbUpdateWordUsage(word);
 
+                    // see if word object has a followWords field and parse into
+                    // candidates if so
                     if (word.getFollowWords() != null) {
                         List<String> candidates = parseFollowWords(word.getFollowWords());
                         initCandyView(candidates);
                     }
                 }
 
+                // add current word into the previous word's followWords list
                 if (mLastWord != null) {
                     dbUpdateFollowWords(mLastWord, word.getWord());
                 }
+
                 mLastWord = word;
+                Log.d("commitClickedWord", "mLastWord is now: " + word.getWord());
 
             } catch (InterruptedException | ExecutionException e) {
                 Log.e("commitclickedword", e.getMessage());
@@ -405,12 +433,18 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 }
 
                 //TODO how do we present a new word (for adding) that's a substring
-                // of existing candidates? e.g. "goo"
+                // of valid > 3 candidates? e.g. "goo"
 
             } catch (ExecutionException | InterruptedException e) {
-                Log.e("setCandy",  e.getMessage());
+                Log.e("getCandy",  e.getMessage());
+            }
+
+            // return intext as sole candidate if no matches in db
+            if (candidates.size() == 0) {
+                candidates.add(inText);
             }
         }
+
         return candidates;
     }
 
@@ -484,7 +518,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             });
         }
 
-        // update textviews with latest candidates depending on how many candidates we got
+        // update textviews with latest candidates depending on
+        // how many candidates were passed
         switch (candidates.size()) {
             case 1:
                 mCandyText1.setText("");
@@ -508,7 +543,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
 
         if (mCandyText1.getText().equals("")) {
-            //mCandyText1.is
             mCandyText1.setBackgroundResource(R.color.colorPrimaryDark);
         } else {
             mCandyText1.setBackgroundResource(R.drawable.rounded_corners);
@@ -618,7 +652,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                         mKeyboardView.invalidateAllKeys();
                     }
             }
-          //  Log.d("loop", String.valueOf(mCapsEnabled) + " " + String.valueOf(mCapsLock));
+            // should suggest a candidate from examining the input field
+            // in all cases except clicking something in candidate bar
             initCandyView(getCandy());
         }
     }
