@@ -381,8 +381,11 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     break;
                 }
             }
-            ic.deleteSurroundingText(inText.length(), 0);
-            ic.commitText(word + " ", 1);
+            //TODO there's a probably a better of way of doing this...
+            //preserve the first character in case it starts with upper case
+            ic.deleteSurroundingText(inText.length() - 1, 0);
+            // commit from 2nd character onswards
+            ic.commitText(word.substring(1) + " ", 1);
             dbAddWord(word);
         }
     }
@@ -406,15 +409,14 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
             for (int x = inText.length() - 1; x >= 0; x--) {
                 if (!Character.isLetter(inText.charAt(x))) {
-                    if (inText.charAt(x) == '\'') continue;
+                    if (inText.charAt(x) == '\'' || inText.charAt(x) == '-') {
+                        continue;
+                    }
 
                     inText = inText.substring(x+1);
                     break;
                 }
             }
-            /*
-            todo Handle non-letter case e.g. hyphen, apostrophe etc.
-             */
 
             try {
                 // query should only return a max of 3
@@ -487,6 +489,10 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                         }
                     break;
                 case Keyboard.KEYCODE_SHIFT:
+                    /*
+                    caps 1 letter only on single press, locks on
+                    second press, back to lowercase on third press
+                     */
                     if (mCapsEnabled) {
                         if (mCapsLock) { // caps on, lock on
                             mCapsEnabled = false;
