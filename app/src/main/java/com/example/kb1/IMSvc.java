@@ -15,6 +15,7 @@ import android.view.KeyEvent;
 import android.view.View;
 import android.view.WindowManager;
 import android.view.inputmethod.InputConnection;
+import android.widget.ArrayAdapter;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -38,8 +39,9 @@ import java.util.concurrent.ExecutorService;
 
 /*
 todo list:
+ -return fuzzy results if no exact match
+ -present more candidates if space?
  -track cursor position?
- -predict next word based off previous (how many?) word(s)
  -rewrite to ditch KeyboardView, has been deprecated as "convenience class"
  -gesture-based input
  -japanese support? (no idea how this is going to work, sounds hard..)
@@ -207,76 +209,12 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
-    // is this needed?
     public WordEn dbGetSingleWord(String word) throws InterruptedException, ExecutionException {
         ExecutorService es = Executors.newSingleThreadExecutor();
         dbCallSingleWord caller = new dbCallSingleWord(word);
         Future<WordEn> future = es.submit(caller);
 
         return future.get();
-    }
-
-
-    public void dbUpdateFollowWords(final WordEn word, final String pattern) {
-        Log.d("dbUpdateFollowWords", "called. word: " + word.getWord() + ", "
-                + "pattern:" + pattern);
-
-        new Thread(() -> {
-            String out = pattern;
-            String fw = word.getFollowWords();
-
-            if (fw != null) {
-                List<String> candidates = parseFollowWords(fw);
-
-                // don't do anything if word already in pattern or itself
-                if (candidates.contains(word.getWord()) || candidates.contains(pattern)) {
-                    return;
-                }
-
-                // enforce max 3 candidates
-                int shift = 0;
-                if (candidates.size() > 2) {
-                    shift = candidates.size() - 2;
-                }
-
-                for (int x = 0; x < candidates.size() - shift; x++) {
-                    out += "," + candidates.get(x);
-                }
-            }
-
-            Log.d("dbUpdateFollowWords", "db update for word: " + word.getWord() + " fw: " + out);
-
-            mWordDb.wordDao().setFollowWords(word.getId(), out);
-        }).start();
-    }
-
-
-    public List<String> parseFollowWords(String fw) {
-        // create a list of usable candidates from input string stored in db
-        // fw format should be: word1,word2,word3
-        Log.d("parseFollowWords", "fw: " + fw);
-
-        List<String> candidates = new ArrayList<>();
-        int start = 0;
-
-        for (int x = 0; x < fw.length(); x++) {
-            if (fw.charAt(x) == ',') {
-                String ss = fw.substring(start, x);
-                if (!ss.isEmpty()) {
-                    candidates.add(ss);
-                }
-                start = x + 1;
-            }
-        }
-
-        // don't forget last word!
-        candidates.add(fw.substring(start));
-
-        for (String s : candidates) {
-            Log.d("parseFollowWords", "candidate: " + s);
-        }
-
-        return candidates;
     }
 
 
@@ -288,7 +226,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
-    public void dbUpdateWordUsage(WordEn word) {
+    public void dbIncrementWordUsage(WordEn word) {
         new Thread (() -> {
             int usage = word.getUsage();
             mWordDb.wordDao().setUsage(word.getId(), ++usage);
@@ -331,6 +269,74 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
+    public void dbUpdateFollowWords(final WordEn word, final String pattern) {
+        // update db record for word to list pattern as a follow word
+        // up to a maximum of 3, subsequent patterns are rotated out
+
+        // follow words should not contain self
+        if (word.getWord().equals(pattern)) {
+            Log.d("dbUpdateFollowWords()", "pattern same as word, skipping: " + pattern);
+            return;
+        }
+
+        new Thread(() -> {
+            String out = pattern;
+            String fw = word.getFollowWords();
+
+            if (fw != null) {
+                List<String> candidates = parseFollowWords(fw);
+
+                // follow words should not contain duplicates
+                if (candidates.contains(pattern)) {
+                    return;
+                }
+
+                // enforce max 3 candidates
+                int shift = 0;
+                if (candidates.size() > 2) {
+                    shift = candidates.size() - 2;
+                }
+
+                for (int x = 0; x < candidates.size() - shift; x++) {
+                    out += "," + candidates.get(x);
+                }
+            }
+
+            Log.d("dbUpdateFollowWords", "db update for word: " + word.getWord()
+                    + " fw: " + out);
+
+            mWordDb.wordDao().setFollowWords(word.getId(), out);
+        }).start();
+    }
+
+
+    public List<String> parseFollowWords(String fw) {
+        // create a list of usable candidates from input string stored in db
+        // fw format should be: word1,word2,word3
+
+        List<String> candidates = new ArrayList<>();
+        int start = 0;
+
+        for (int x = 0; x < fw.length(); x++) {
+            if (fw.charAt(x) == ',') {
+                String ss = fw.substring(start, x);
+                if (!ss.isEmpty()) {
+                    candidates.add(ss);
+                }
+                start = x + 1;
+            }
+        }
+
+        // don't forget to add last substring!
+        candidates.add(fw.substring(start));
+
+        return candidates;
+    }
+
+
+    // take the text from a user elected candidate, commit to text field,
+    // create word if doesn't exist, updates usage if does exist,
+    // prepares predicted next words aka "follow words"
     public void commitClickedWord(String text) {
         InputConnection ic = getCurrentInputConnection();
 
@@ -368,6 +374,10 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
             // TODO fix bug where all 3 candidates are same word
 
+            // blank out the candidate bar, it will repopulate if there are
+            // valid follow words
+            initCandyView(new ArrayList<>());
+
             try {
                 // attempt to get exact match from db and create new
                 // wordEn object if no hits
@@ -377,7 +387,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     word = new WordEn(text.toLowerCase());
                     dbAddWord(word);
                 } else {
-                    dbUpdateWordUsage(word);
+                    dbIncrementWordUsage(word);
 
                     // see if word object has a followWords field and parse into
                     // candidates if so
@@ -388,10 +398,12 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 }
 
                 // add current word into the previous word's followWords list
+                // spins off a new thread but ok as we don't need in real time
                 if (mLastWord != null) {
                     dbUpdateFollowWords(mLastWord, word.getWord());
                 }
 
+                // finally, current word now registed as the last word committed
                 mLastWord = word;
                 Log.d("commitClickedWord", "mLastWord is now: " + word.getWord());
 
@@ -580,7 +592,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
              this will require ditching KeyboardView (has been deprecated anyway)
              */
 
-            // when should this be false?
+            // do we ever want this to be false?
             setCandidatesViewShown(true);
 
             switch(primaryCode) {
@@ -638,6 +650,17 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     dbWipe();
                     Toast.makeText(this, "db wiped", Toast.LENGTH_LONG).show();
                     break;
+                case 46:
+                case 45:
+                case 44:
+                case 43:
+                case 33:
+                case 63:
+                    // remove leading space if exists, required for period, comma etc
+                    if (ic.getTextBeforeCursor(1,0).equals(" ")) {
+                        ic.deleteSurroundingText(1, 0);
+                    }
+                    // break deliberately left out
                 default:
                     char code = (char) primaryCode;
                     if (Character.isLetter(code) && mCapsEnabled) {
