@@ -125,11 +125,10 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
     public boolean importWordlist() {
         Log.d("inportWordList", "attempting to import word list from xml");
-        InputStream stream = null;
         List<String> words = new ArrayList<>();
 
         WordListXmlParser mWordListXmlParser = new WordListXmlParser();
-        stream = getResources().openRawResource(R.raw.wordlist_en);
+        InputStream stream = getResources().openRawResource(R.raw.wordlist_en);
 
         try {
             words = mWordListXmlParser.parse(stream);
