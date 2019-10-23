@@ -11,14 +11,17 @@ import android.net.Uri;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.Log;
+import android.util.TypedValue;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowManager;
 import android.view.inputmethod.InputConnection;
-import android.widget.ArrayAdapter;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.core.content.ContextCompat;
 import androidx.room.Room;
 
 import com.example.kb1.room.WordEn;
@@ -60,6 +63,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private int mCursorPos;
     private TextView mCandyText1, mCandyText2, mCandyText3;
     private WordEn mLastWord;
+    private int mCandidatesMax = 3;
 
     //todo fix this - automatically open relevant settings screen if no access
     //final boolean overlayEnabled = Settings.canDrawOverlays(getApplicationContext(MainActivity.this));
@@ -333,6 +337,92 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
+    public int dpToPx(int px) {
+        return (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP,
+                px, getResources().getDisplayMetrics());
+    }
+
+
+    public boolean addCandidateToView(String text) {
+        //TODO check if we have space to add another word in the candidate bar
+
+        if (text.isEmpty() || mCandyView == null) {
+            return false;
+        }
+
+        TextView tv = new TextView(this);
+
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.setMargins(dpToPx(4), dpToPx(3), dpToPx(4), dpToPx(2));
+        tv.setLayoutParams(params);
+        tv.setPadding(dpToPx(10), dpToPx(5), dpToPx(10), dpToPx(5));
+        tv.setBackgroundResource(R.drawable.rounded_corners);
+        tv.setText(text);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        tv.setTextColor(ContextCompat.getColor(this, R.color.colorLightText));
+
+        tv.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                commitClickedWord(text);
+            }
+        });
+
+        // can replace with this?
+        //tv.setOnClickListener((textView) -> commitClickedWord(text));
+
+        // TODO what if user long presses a new word (candidate for dictionary add)?
+        tv.setOnLongClickListener(new View.OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                dbDelWord(text);
+                return true;
+            }
+        });
+
+        ((LinearLayout) mCandyView).addView(tv);
+
+        return true;
+    }
+
+
+    public boolean clearCandidates() {
+        if (mCandyView != null) {
+            int quant = ((LinearLayout) mCandyView).getChildCount();
+
+            for (int x = 0; x < quant; x++) {
+                ((LinearLayout) mCandyView).removeViewAt(x);
+            }
+
+            return true;
+        }
+        else return false;
+    }
+
+
+    public List<String> getFuzzyWords (String pattern) {
+        try {
+            List<WordEn> fuzzyWords = dbGetWords(pattern);
+
+            if (fuzzyWords.size() == 0) {
+                for (int x = 1; x < pattern.length(); x++){
+                    fuzzyWords = dbGetWords(pattern.substring(pattern.length() - x));
+                    if (fuzzyWords.size() < mCandidatesMax) {
+                        //TODO
+                    }
+                }
+            }
+
+        } catch (InterruptedException | ExecutionException e) {
+            Log.e("checkCandySpace", e.getMessage());
+        }
+
+        // return blank list if all else fails
+        return (new ArrayList<>());
+    }
+
+
     // take the text from a user elected candidate, commit to text field,
     // create word if doesn't exist, updates usage if does exist,
     // prepares predicted next words aka "follow words"
@@ -368,6 +458,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 ic.deleteSurroundingText(inText.length() - 1, 0);
                 shift = 1;
             }
+
             // commit from 2nd character onwards if replacing existing word
             ic.commitText(text.substring(shift) + " ", 1);
 
@@ -461,6 +552,33 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
 
     public void initCandyView(List<String> candidates) {
+       if (mCandyView != null) {
+           //TODO what to pass as root if not null? no viewgroup to pass?
+           mCandyView = getLayoutInflater().inflate(R.layout.layout_candy, null);
+       }
+
+       // clear existing candidates (if any)
+       clearCandidates();
+
+       //TODO should we pass the candidate view here or keep using global mCandyView ?
+
+       for (String c : candidates) {
+           // stop if returns false (should mean we're out of room)
+           if (!addCandidateToView(c)) {
+               break;
+           }
+       }
+    }
+
+    @Override
+    public View onCreateCandidatesView() {
+        initCandyView(getCandy());
+        return mCandyView;
+    }
+
+
+/*
+    public void initCandyView_old(List<String> candidates) {
         // create the view if it doesn't exist
         if (mCandyView == null) {
             mCandyView = getLayoutInflater().inflate(R.layout.layout_candy, null);
@@ -472,7 +590,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText1.setOnClickListener(new View.OnClickListener() {
                 @Override
                 public void onClick(View v) {
-                    // TODO do we need this check? will this ever happen?
                     if (!mCandyText1.getText().toString().isEmpty()) {
                         commitClickedWord(mCandyText1.getText().toString());
                     }
@@ -498,7 +615,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 }
             });
 
-            // TODO what if user long presses a new word (candidate for dictionary add)?
             mCandyText2.setOnLongClickListener(new View.OnLongClickListener() {
                 @Override
                 public boolean onLongClick(View v) {
@@ -571,14 +687,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             mCandyText3.setBackgroundResource(R.drawable.rounded_corners);
         }
     }
-
-
-    @Override
-    public View onCreateCandidatesView() {
-        initCandyView(getCandy());
-        return mCandyView;
-    }
-
+*/
 
     @Override
     public void onKey(int primaryCode, int[] keyCodes) {
@@ -637,9 +746,11 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     break;
                 case 32:
                     ic.commitText(" ",1);
+                    addCandidateToView("test");
                     break;
                 case 666:
                     setInputView(getKeyboardView("SUB"));
+                    clearCandidates();
                     break;
                 case 667:
                     setInputView(getKeyboardView("MAIN"));
