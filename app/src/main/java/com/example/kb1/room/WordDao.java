@@ -16,8 +16,8 @@ public interface WordDao {
 
     // put a limit here so we don't get several hundred word candidate lists
     // whenever users types the first character
-    @Query("SELECT * from dictionary_en WHERE word LIKE (:pattern || '%') ORDER BY count DESC LIMIT 3")
-    List<WordEn> getWords(String pattern);
+    @Query("SELECT * from dictionary_en WHERE word LIKE (:pattern || '%') ORDER BY count DESC LIMIT :max")
+    List<WordEn> getWords(String pattern, int max);
 
     @Query("SELECT * from dictionary_en WHERE word = :pattern")
     WordEn getSingleWord(String pattern);
