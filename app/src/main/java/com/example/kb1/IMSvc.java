@@ -29,6 +29,7 @@ import androidx.room.Room;
 import com.example.kb1.room.WordEn;
 import com.example.kb1.room.WordRoomDatabase;
 
+import org.w3c.dom.Text;
 import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.IOException;
@@ -46,12 +47,12 @@ import java.util.concurrent.ExecutorService;
 /*
 todo list:
  -return fuzzy results if no exact match
- -present more candidates if space?
  -track cursor position?
  -rewrite to ditch KeyboardView, has been deprecated as "convenience class"
  -gesture-based input
  -japanese support? (no idea how this is going to work, sounds hard..)
  -chinese support? (in theory this should be easier than jp since no kana
+ -korean support? (relatively..) simple alphabet, should be the easiest of cjk
  */
 
 public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboardActionListener {
@@ -113,11 +114,13 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         switch (layout) {
             case "MAIN":
-                mKeyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
+                mKeyboardView = (KeyboardView) getLayoutInflater()
+                        .inflate(R.layout.keyboard_view, null);
                 mKeyboard = new Keyboard(this, mainLayout);
                 break;
             case "SUB":
-                mKeyboardView = (KeyboardView) getLayoutInflater().inflate(R.layout.keyboard_view, null);
+                mKeyboardView = (KeyboardView) getLayoutInflater()
+                        .inflate(R.layout.keyboard_view, null);
                 mKeyboard = new Keyboard(this, subLayout);
                 break;
         }
@@ -255,7 +258,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 new Thread(() -> {
                     int result = mWordDb.wordDao().delete(pattern);
                     if (result < 1) {
-                        Log.w("dbdDelWord", "tried to delete word that doesn't exist: " + pattern);
+                        Log.w("dbdDelWord", "tried to delete word that doesn't exist: "
+                                + pattern);
                     }
 
 
@@ -496,7 +500,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         // check if adding the word will take us over 90% of screen width
         // (leave 10% for padding, margins etc.)
-        if (current_width + tv_width <= screen_width * 0.90) {
+        if (current_width + tv_width <= screen_width * 0.87) {
             current_width += tv_width;
 
             // keep track of the view id so we can remove it later
@@ -615,12 +619,49 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return mCandyView;
     }
 
+    @Override
+    public void onWindowShown() {
+        super.onWindowShown();
+
+        // typically want to start with a capital letter
+        determineCapsState();
+    }
 
     @Override
     public void setCandidatesView(View view) {
         super.setCandidatesView(view);
     }
 
+
+    // look at previous text and determine if we want to automatically
+    // enable caps mode or not
+    // TODO what are the other cases?
+    public void determineCapsState() {
+        InputConnection ic = getCurrentInputConnection();
+        if (ic != null) {
+            boolean caps = false;
+            CharSequence char1 = ic.getTextBeforeCursor(1, 0);
+            CharSequence char2 = ic.getTextBeforeCursor(2, 0);
+
+            // couldn't get one character, must be at start of edittext
+            if(TextUtils.isEmpty(char1)) {
+                caps = true;
+            }
+
+            // period + space typically means new sentence
+            if(!TextUtils.isEmpty(char2)) {
+                if (char2.equals(". ") || char2.equals("? ") || char2.equals("! ")) {
+                    caps = true;
+                }
+            }
+
+            if (caps) {
+                mCapsEnabled = true;
+                mKeyboardView.setShifted(mCapsEnabled);
+                mKeyboardView.invalidateAllKeys();
+            }
+        }
+    }
 
     /*
     todo this whole part needs rewriting, should just do a ic.committext
@@ -719,6 +760,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
             // should suggest a candidate from examining the input field
             // in all cases except clicking something in candidate bar
             setCandyView(getCandy());
+            determineCapsState();
         }
     }
 
