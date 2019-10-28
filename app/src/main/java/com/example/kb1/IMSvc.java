@@ -29,7 +29,6 @@ import androidx.room.Room;
 import com.example.kb1.room.WordEn;
 import com.example.kb1.room.WordRoomDatabase;
 
-import org.w3c.dom.Text;
 import org.xmlpull.v1.XmlPullParserException;
 
 import java.io.IOException;
@@ -48,7 +47,7 @@ import java.util.concurrent.ExecutorService;
 todo list:
  -return fuzzy results if no exact match
  -track cursor position?
- -rewrite to ditch KeyboardView, has been deprecated as "convenience class"
+ -rewrite to ditch KeyboardView, has been deprecated
  -gesture-based input
  -japanese support? (no idea how this is going to work, sounds hard..)
  -chinese support? (in theory this should be easier than jp since no kana
@@ -62,13 +61,14 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     private WordEn mLastWord;
     private boolean mCapsEnabled = false;
     private boolean mCapsLock = false;
-    private List<Integer> mCandyIds = new ArrayList<>();
+    private List<TextView> mCandyTextViews = new ArrayList<>();
 
     private static final String DB_TABLE_EN = "dic_en_db";
     private WordRoomDatabase mWordDb;
 
     private final int MAX_SEEK_CHARS = 15;
     private final int MAX_CANDIDATES = 6;
+    private final int FONT_SIZE_CANDIDATE = 24;
 
     //todo fix this - automatically open relevant settings screen if no access
     //final boolean overlayEnabled = Settings.canDrawOverlays(getApplicationContext(MainActivity.this));
@@ -194,6 +194,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         @Override
         public List<WordEn> call() throws InvalidParameterException {
+            // this will technically give us 7 (6 + input) but we remove the dup later
             return mWordDb.wordDao().getWords(pattern, MAX_CANDIDATES);
         }
     }
@@ -293,13 +294,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     public void dbUpdateFollowWords(final WordEn word, final String pattern) {
         // update db record for word to list pattern as a follow word
         // up to a maximum of MAX_CANDIDATES, subsequent patterns are rotated out
-
-        // follow words should not contain self
-        if (word.getWord().equals(pattern)) {
-            Log.d("dbUpdateFollowWords()", "pattern same as word, skipping: " + pattern);
-            return;
-        }
-
         new Thread(() -> {
             String out = pattern;
             String fw = word.getFollowWords();
@@ -449,7 +443,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     dbUpdateFollowWords(mLastWord, word.getWord());
                 }
 
-                // finally, current word now registed as the last word committed
+                // finally, current word now registered as the last word committed
                 mLastWord = word;
                 Log.d("commitClickedWord", "mLastWord is now: " + word.getWord());
 
@@ -468,7 +462,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
     // create a textview, then measure and check if we have room to add it
     // returns the new total width of the candidates or -1 if no room
-    public int addCandidateToView(String text, int current_width, int screen_width) {
+    public int addCandidateToCandyViewList(String text, int current_width, int screen_width) {
         if (text.isEmpty() || mCandyView == null) {
             return -1;
         }
@@ -484,7 +478,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         tv.setPadding(dpToPx(10), dpToPx(5), dpToPx(10), dpToPx(5));
         tv.setBackgroundResource(R.drawable.rounded_corners);
         tv.setText(text);
-        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, FONT_SIZE_CANDIDATE);
         tv.setTextColor(ContextCompat.getColor(this, R.color.colorLightText));
 
         tv.setOnClickListener((textView) -> commitClickedWord(text));
@@ -495,26 +489,21 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         });
 
         tv.measure(View.MeasureSpec.UNSPECIFIED, View.MeasureSpec.UNSPECIFIED);
-
         int tv_width = tv.getMeasuredWidth();
 
-        // check if adding the word will take us over 90% of screen width
-        // (leave 10% for padding, margins etc.)
-        if (current_width + tv_width <= screen_width * 0.87) {
+        // check if adding the word will take us over x% of screen width
+        // and cause wrapping (leave some % for padding, margins etc.)
+        if (current_width + tv_width <= screen_width * 0.88) {
             current_width += tv_width;
 
-            // keep track of the view id so we can remove it later
-            tv.setId(View.generateViewId());
-            mCandyIds.add(tv.getId());
+            // store the checked view into the candidate view list
+            mCandyTextViews.add(tv);
 
-            ((LinearLayout) mCandyView).addView(tv);
-
-            Log.d("addcandidatetoview", "successfully added: " + text);
-
-            // return the new width
+            // return the new total width
             return current_width;
         }
 
+        // return -1 if no room to add
         return -1;
     }
 
@@ -541,23 +530,21 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 }
             }
 
+            // add the user input as the first candidate
+            candidates.add(inText);
+
             try {
                 List<WordEn> words = dbGetWords(inText);
 
                 for (WordEn word : words) {
-                    candidates.add(word.getWord());
+                    // prevent showing same word twice if intext is same as a word in db
+                    if (!word.getWord().equals(inText)) {
+                        candidates.add(word.getWord());
+                    }
                 }
-
-                //TODO how do we present a new word (for adding) that's a substring
-                // of valid > 3 char candidates? e.g. "goo"
-
-            } catch (ExecutionException | InterruptedException e) {
-                Log.e("getCandy",  e.getMessage());
             }
-
-            // return intext as sole candidate if no matches in db
-            if (candidates.size() == 0) {
-                candidates.add(inText);
+            catch (ExecutionException | InterruptedException e) {
+                Log.e("getCandy",  e.getMessage());
             }
         }
 
@@ -567,11 +554,12 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
     public void clearCandidates() {
         if (mCandyView != null) {
-            for (int id : mCandyIds) {
-                ((LinearLayout) mCandyView).removeView(mCandyView.findViewById(id));
+            for (TextView tv : mCandyTextViews) {
+                ((LinearLayout) mCandyView).removeView(tv);
             }
 
-            mCandyIds.clear();
+            // clear list when done
+            mCandyTextViews.clear();
         }
     }
 
@@ -580,10 +568,14 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
        // create the view if it doesn't exist
        if (mCandyView == null) {
            mCandyView = new LinearLayout(this);
-           LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                   ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+           // these are ignored, looks like candidate view is always match_parent x wrap_contents
+          // LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+            //       ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(80));
+           //mCandyView.setLayoutParams(params);
 
-           mCandyView.setLayoutParams(params);
+           // if this is not set, candidate bar will disappear when no candidates to present
+           mCandyView.setMinimumHeight(dpToPx(40));
+
            ((LinearLayout) mCandyView).setOrientation(LinearLayout.HORIZONTAL);
            ((LinearLayout) mCandyView).setGravity(Gravity.CENTER);
            mCandyView.setBackgroundColor(ContextCompat.getColor(this,
@@ -591,20 +583,33 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
        }
 
        // remove any existing candidate textviews
-       //TODO OR we could just rebuild the whole view from scratch every time
+       //TODO OR we could just rebuild the candidate view from scratch every time
        // and we wouldn't need to do this, which is more efficient?
        clearCandidates();
 
-       // add up the total width of all the candidates to the candidate
-       // bar until we run out of space
+       // generate textview list. add up the total width of all the candidates
+       // to the candidate bar until we run out of space
        int total_width = 0;
        int screen_width = Resources.getSystem().getDisplayMetrics().widthPixels;
 
        for (String word : candidates) {
-           // stop if returns -1 (should mean we're out of room)
-           total_width = addCandidateToView(word, total_width, screen_width);
+           // stop if returns -1 (i.e. out of room)
+           total_width = addCandidateToCandyViewList(word, total_width, screen_width);
            if (total_width == -1) {
                break;
+           }
+       }
+
+       // candidates should appear in view the in the following order
+       // current entry in center then fan out e.g.: 5 3 1 0 2 4
+       for (int x = 0; x < mCandyTextViews.size(); x++) {
+           if (x % 2 == 0) {
+               // add to the right
+               ((LinearLayout) mCandyView).addView(mCandyTextViews.get(x));
+           }
+           else {
+               // add to the left
+               ((LinearLayout) mCandyView).addView(mCandyTextViews.get(x), 0);
            }
        }
 
@@ -619,13 +624,14 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         return mCandyView;
     }
 
+
     @Override
     public void onWindowShown() {
         super.onWindowShown();
-
         // typically want to start with a capital letter
         determineCapsState();
     }
+
 
     @Override
     public void setCandidatesView(View view) {
@@ -633,9 +639,9 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
     }
 
 
-    // look at previous text and determine if we want to automatically
-    // enable caps mode or not
-    // TODO what are the other cases?
+    // look at previous text and determine if we should
+    // enable caps mode for the user or not
+    // TODO any other cases?
     public void determineCapsState() {
         InputConnection ic = getCurrentInputConnection();
         if (ic != null) {
@@ -648,7 +654,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 caps = true;
             }
 
-            // period + space typically means new sentence
+            // period/excl/question mark + space typically means new sentence
             if(!TextUtils.isEmpty(char2)) {
                 if (char2.equals(". ") || char2.equals("? ") || char2.equals("! ")) {
                     caps = true;
@@ -663,11 +669,11 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
     }
 
+
     /*
     todo this whole part needs rewriting, should just do a ic.committext
      on the key label contents rather than this stupid ascii-only code system
      and let us get rid of horrible hacks like code 666, 999 etc.
-     this will require ditching KeyboardView (has been deprecated anyway)
      */
     @Override
     public void onKey(int primaryCode, int[] keyCodes) {
@@ -764,8 +770,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         }
     }
 
-
-    //can't imagine needing to use any of these
+    // remaining mandatory overrides
     @Override
     public void onText(CharSequence text) {
     }

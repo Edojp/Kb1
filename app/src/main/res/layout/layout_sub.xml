@@ -22,7 +22,7 @@
 
     <Row>
         <Key android:codes="34" android:keyLabel="&quot;" android:keyEdgeFlags="left"/>
-        <Key android:codes="39" android:keyLabel="&apos;"/>
+        <Key android:codes="43" android:keyLabel="+"/>
         <Key android:codes="91" android:keyLabel="["/>
         <Key android:codes="93" android:keyLabel="]"/>
         <Key android:codes="35" android:keyLabel="#"/>
