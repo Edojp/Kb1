@@ -46,9 +46,8 @@ import java.util.concurrent.ExecutorService;
 /*
 todo list:
  -return fuzzy results if no exact match
- -track cursor position?
  -rewrite to ditch KeyboardView, has been deprecated
- -gesture-based input
+ -gesture-based input (probably related to the above)
  -japanese support? (no idea how this is going to work, sounds hard..)
  -chinese support? (in theory this should be easier than jp since no kana
  -korean support? (relatively..) simple alphabet, should be the easiest of cjk
@@ -476,6 +475,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
         tv.setLayoutParams(params);
 
         tv.setPadding(dpToPx(10), dpToPx(5), dpToPx(10), dpToPx(5));
+        tv.setMaxLines(1);
+
         tv.setBackgroundResource(R.drawable.rounded_corners);
         tv.setText(text);
         tv.setTextSize(TypedValue.COMPLEX_UNIT_SP, FONT_SIZE_CANDIDATE);
@@ -493,7 +494,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
         // check if adding the word will take us over x% of screen width
         // and cause wrapping (leave some % for padding, margins etc.)
-        if (current_width + tv_width <= screen_width * 0.88) {
+        if (current_width + tv_width <= screen_width * 0.87) {
             current_width += tv_width;
 
             // store the checked view into the candidate view list
@@ -538,7 +539,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
 
                 for (WordEn word : words) {
                     // prevent showing same word twice if intext is same as a word in db
-                    if (!word.getWord().equals(inText)) {
+                    if (!word.getWord().equals(inText.toLowerCase())) {
                         candidates.add(word.getWord());
                     }
                 }
@@ -568,10 +569,6 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
        // create the view if it doesn't exist
        if (mCandyView == null) {
            mCandyView = new LinearLayout(this);
-           // these are ignored, looks like candidate view is always match_parent x wrap_contents
-          // LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-            //       ViewGroup.LayoutParams.MATCH_PARENT, dpToPx(80));
-           //mCandyView.setLayoutParams(params);
 
            // if this is not set, candidate bar will disappear when no candidates to present
            mCandyView.setMinimumHeight(dpToPx(40));
@@ -579,7 +576,8 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
            ((LinearLayout) mCandyView).setOrientation(LinearLayout.HORIZONTAL);
            ((LinearLayout) mCandyView).setGravity(Gravity.CENTER);
            mCandyView.setBackgroundColor(ContextCompat.getColor(this,
-                   R.color.colorPrimaryDark));
+                   R.color.colorPrimary));
+
        }
 
        // remove any existing candidate textviews
@@ -600,6 +598,10 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
            }
        }
 
+       if (mCandyTextViews.size() > 0) {
+           mCandyTextViews.get(0).setBackgroundResource(R.drawable.rounded_corners_alt);
+       }
+
        // candidates should appear in view the in the following order
        // current entry in center then fan out e.g.: 5 3 1 0 2 4
        for (int x = 0; x < mCandyTextViews.size(); x++) {
@@ -617,6 +619,14 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
        setCandidatesView(mCandyView);
     }
 
+    // TODO check this works - should re-run the caps logic if the cursor pos changes
+    //  in the text field
+    @Override
+    public void onUpdateSelection(int oldSelStart, int oldSelEnd, int newSelStart, int newSelEnd, int candidatesStart, int candidatesEnd) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd);
+        determineCapsState();
+
+    }
 
     @Override
     public View onCreateCandidatesView() {
@@ -661,7 +671,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                 }
             }
 
-            if (caps) {
+            if (caps && !mCapsEnabled) {
                 mCapsEnabled = true;
                 mKeyboardView.setShifted(mCapsEnabled);
                 mKeyboardView.invalidateAllKeys();
@@ -705,6 +715,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     /*
                     caps 1 letter only on single press, locks on
                     second press, back to lowercase on third press
+                    TODO add visual indicator to show caps lock on
                      */
                     if (mCapsEnabled) {
                         if (mCapsLock) { // caps on, lock on
@@ -764,9 +775,7 @@ public class IMSvc extends InputMethodService implements KeyboardView.OnKeyboard
                     }
             }
             // should suggest a candidate from examining the input field
-            // in all cases except clicking something in candidate bar
             setCandyView(getCandy());
-            determineCapsState();
         }
     }
 
